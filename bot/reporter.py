@@ -1,12 +1,14 @@
 """
 Call Reporter and Local Spool Management.
 Handles reliable HTTP delivery of finished call payloads to the Cloudflare Worker API.
-Features:
-- Idempotent UUID primary keys
-- Exponential backoff with jitter on network failures
-- Local disk spooling to bot/spool/<call_id>.json if backend unreachable
-- Automatic startup spool replay and CLI flush (--flush)
-- Single-execution finalize() guarantee
+
+Key Invariants:
+- Multiple calls per session: finalize-once is tracked per call_id (or on CallSession)
+- Reuses a persistent httpx.AsyncClient
+- Exponential backoff with jitter on network errors and transient HTTP status (408, 429, 5xx)
+- No retry on client errors (400, 401, 413, 422): stored to bot/spool/rejected/
+- Atomic spool writes (write to .tmp then os.replace)
+- Pydantic payload validation before transmission
 """
 
 import asyncio
@@ -14,115 +16,192 @@ import json
 import logging
 import os
 import random
+import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, List
+from pydantic import BaseModel, Field
 
-try:
-  import httpx
-  HAS_HTTPX = True
-except ImportError:
-  import urllib.request
-  import urllib.error
-  HAS_HTTPX = False
+import httpx
 
 logger = logging.getLogger("bot.reporter")
 SPOOL_DIR = Path(__file__).resolve().parent / "spool"
+REJECTED_DIR = SPOOL_DIR / "rejected"
+
+
+class TranscriptTurnModel(BaseModel):
+  turn_index: int = Field(ge=0)
+  role: str
+  text: str = Field(max_length=4000)
+  ts_ms: int = Field(ge=0, default=0)
+  interrupted: bool = False
+
+
+class TurnMetricModel(BaseModel):
+  turn_index: int = Field(ge=0)
+  stt_ms: Optional[int] = None
+  llm_ttfb_ms: Optional[int] = None
+  tts_ttfb_ms: Optional[int] = None
+  voice_to_voice_ms: Optional[int] = None
+
+
+class CallConfigModel(BaseModel):
+  stt: str = "deepgram:nova-3"
+  llm: str = "groq:llama-3.3-70b-versatile"
+  tts: str = "cartesia:sonic"
+  persona: str = "default"
+
+
+class CallUsageModel(BaseModel):
+  llm_input_tokens: int = 0
+  llm_output_tokens: int = 0
+  tts_chars: int = 0
+
+
+class IngestCallPayloadModel(BaseModel):
+  call_id: str
+  started_at: str
+  ended_at: str
+  duration_ms: int = Field(ge=0)
+  status: str
+  end_reason: Optional[str] = None
+  config: CallConfigModel = Field(default_factory=CallConfigModel)
+  transcript: List[TranscriptTurnModel] = Field(default_factory=list)
+  metrics: List[TurnMetricModel] = Field(default_factory=list)
+  usage: CallUsageModel = Field(default_factory=CallUsageModel)
 
 
 class CallReporter:
-  def __init__(self, worker_base_url: str, ingest_token: str):
+  def __init__(self, worker_base_url: str, ingest_token: str, client: Optional[httpx.AsyncClient] = None):
     self.worker_base_url = worker_base_url.rstrip("/")
     self.ingest_token = ingest_token
+    self._client = client
     self._finalized = False
+    self._finalized_call_ids: Set[str] = set()
     self._lock = asyncio.Lock()
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+    REJECTED_DIR.mkdir(parents=True, exist_ok=True)
 
-  async def finalize_and_report(self, payload: Dict[str, Any]) -> bool:
+  def set_client(self, client: httpx.AsyncClient) -> None:
+    self._client = client
+
+  async def finalize_call(self, call_id: str) -> bool:
     """
-    Guarantees exactly-once reporting per call session.
-    Returns True if successfully ingested or spooled safely.
+    Returns True if this is the first finalization for this call_id,
+    False if already finalized.
     """
     async with self._lock:
-      if self._finalized:
-        logger.info("Call already finalized; skipping redundant report", extra={"call_id": payload.get("call_id")})
-        return True
-      self._finalized = True
+      if call_id in self._finalized_call_ids:
+        return False
+      self._finalized_call_ids.add(call_id)
+      return True
 
-    return await self.send_with_retry_and_spool(payload)
-
-  async def _post_json(self, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> int:
-    """Internal helper sending JSON via httpx or urllib."""
-    if HAS_HTTPX:
-      async with httpx.AsyncClient(timeout=5.0) as client:
-        res = await client.post(url, json=payload, headers=headers)
-        return res.status_code
-    else:
-      def sync_post():
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        try:
-          with urllib.request.urlopen(req, timeout=5.0) as res:
-            return res.getcode()
-        except urllib.error.HTTPError as e:
-          return e.code
-      return await asyncio.to_thread(sync_post)
-
-  async def send_with_retry_and_spool(self, payload: Dict[str, Any], max_attempts: int = 3) -> bool:
+  async def finalize_and_report(self, payload: Dict[str, Any]) -> bool:
+    """Finalizes once and reports the payload. If already finalized, returns True without duplicate send."""
+    if self._finalized:
+      return True
     call_id = payload.get("call_id", "unknown")
+    if not await self.finalize_call(call_id):
+      return True
+    self._finalized = True
+    return await self.report_call(payload)
+
+  def validate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Validates raw dictionary against Pydantic contract before sending."""
+    model = IngestCallPayloadModel(**payload)
+    return model.model_dump()
+
+  async def report_call(self, payload: Dict[str, Any], max_attempts: int = 3) -> bool:
+    call_id = payload.get("call_id", "unknown")
+
+    # Validate before attempting send
+    try:
+      validated = self.validate_payload(payload)
+    except Exception as exc:
+      logger.error(f"Payload validation failed for call {call_id}: {exc}", extra={"call_id": call_id})
+      self._atomic_spool(call_id, payload, REJECTED_DIR)
+      return False
+
     url = f"{self.worker_base_url}/calls"
     headers = {
       "Authorization": f"Bearer {self.ingest_token}",
       "Content-Type": "application/json",
-      "X-Request-ID": f"bot_rep_{call_id}",
+      "X-Request-ID": f"rep_{call_id}",
     }
 
-    # Attempt HTTP POST with exponential backoff & jitter
+    # Attempt send with exponential backoff & jitter
     for attempt in range(1, max_attempts + 1):
       try:
-        status_code = await self._post_json(url, payload, headers)
-        if 200 <= status_code < 300:
-          logger.info("Successfully reported call to Worker", extra={"call_id": call_id, "status": status_code})
-          return True
-        elif status_code in (400, 401):
-          logger.error("Worker rejected payload", extra={"call_id": call_id, "status": status_code})
-          break
+        if self._client and not self._client.is_closed:
+          response = await self._client.post(url, json=validated, headers=headers)
         else:
-          logger.warning("Worker returned transient status, retrying", extra={"call_id": call_id, "attempt": attempt, "status": status_code})
-      except Exception as exc:
-        logger.warning("Network error reaching Worker API", extra={"call_id": call_id, "attempt": attempt, "error": str(exc)})
+          async with httpx.AsyncClient(timeout=5.0) as temp_client:
+            response = await temp_client.post(url, json=validated, headers=headers)
+
+        # 2xx Success (including idempotent duplicate 200)
+        if 200 <= response.status_code < 300:
+          logger.info(f"Reported call {call_id} successfully (status={response.status_code})", extra={"call_id": call_id})
+          return True
+
+        # Non-retriable client errors: move to rejected/
+        if response.status_code in (400, 401, 413, 422):
+          logger.error(
+            f"Worker rejected call {call_id} (HTTP {response.status_code}): {response.text}",
+            extra={"call_id": call_id}
+          )
+          self._atomic_spool(call_id, validated, REJECTED_DIR)
+          return False
+
+        # Retriable server error or rate limit (408, 429, 5xx)
+        logger.warning(
+          f"Transient status {response.status_code} for call {call_id} (attempt {attempt}/{max_attempts})",
+          extra={"call_id": call_id}
+        )
+
+      except (httpx.RequestError, httpx.TimeoutException) as exc:
+        logger.warning(
+          f"Network error reporting call {call_id} (attempt {attempt}/{max_attempts}): {exc}",
+          extra={"call_id": call_id}
+        )
 
       if attempt < max_attempts:
-        backoff = (2 ** (attempt - 1)) + random.uniform(0.1, 0.5)
+        backoff = (2 ** (attempt - 1)) + random.uniform(0.1, 0.4)
         await asyncio.sleep(backoff)
 
-    # All attempts failed -> Fallback to local spool file
-    logger.warning("Failed all POST attempts; writing payload to local spool", extra={"call_id": call_id})
-    return self.spool_payload(call_id, payload)
+    # Exhausted retries -> Spool to disk
+    logger.warning(f"Exhausted retries for call {call_id}. Spooling to disk.", extra={"call_id": call_id})
+    self.spool_payload(call_id, validated)
+    return False
 
-  def spool_payload(self, call_id: str, payload: Dict[str, Any]) -> bool:
-    """Writes payload to disk so it is never lost during backend outages."""
+  def _atomic_spool(self, call_id: str, payload: Dict[str, Any], target_dir: Path) -> bool:
+    """Atomically writes payload to a temporary file then replaces target."""
     try:
-      spool_file = SPOOL_DIR / f"{call_id}.json"
-      with open(spool_file, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-      logger.info("Spooled call payload to disk successfully", extra={"path": str(spool_file)})
+      target_dir.mkdir(parents=True, exist_ok=True)
+      final_path = target_dir / f"{call_id}.json"
+
+      with tempfile.NamedTemporaryFile("w", dir=target_dir, delete=False, encoding="utf-8") as tf:
+        json.dump(payload, tf, indent=2)
+        temp_name = tf.name
+
+      os.replace(temp_name, final_path)
       return True
     except Exception as exc:
-      logger.critical("Fatal: could not spool call payload to disk", extra={"call_id": call_id, "error": str(exc)})
+      logger.critical(f"Failed to spool payload for call {call_id}: {exc}", extra={"call_id": call_id})
       return False
+
+  def spool_payload(self, call_id: str, payload: Dict[str, Any]) -> bool:
+    return self._atomic_spool(call_id, payload, SPOOL_DIR)
 
   async def flush_spool(self) -> int:
     """
-    Replays all spooled calls to the Worker.
-    Removes files only after verified 2xx response.
-    Returns the count of successfully flushed calls.
+    Replays all spooled call files in bot/spool/ to Worker API.
+    Deletes only files that receive 2xx response.
     """
-    spool_files = list(SPOOL_DIR.glob("*.json"))
+    spool_files = [f for f in SPOOL_DIR.glob("*.json") if f.is_file()]
     if not spool_files:
       return 0
 
-    logger.info("Flushing spooled call files", extra={"count": len(spool_files)})
-    flushed = 0
+    logger.info(f"Replaying {len(spool_files)} spooled call(s)...")
+    flushed_count = 0
 
     for file_path in spool_files:
       try:
@@ -134,28 +213,26 @@ class CallReporter:
         headers = {
           "Authorization": f"Bearer {self.ingest_token}",
           "Content-Type": "application/json",
+          "X-Request-ID": f"flush_{call_id}",
         }
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-          response = await client.post(url, json=payload, headers=headers)
-          if 200 <= response.status_code < 300:
-            logger.info("Successfully flushed spooled call; removing file", extra={"call_id": call_id})
-            file_path.unlink(missing_ok=True)
-            flushed += 1
-          else:
-            logger.warning("Failed to flush spooled call", extra={"call_id": call_id, "status": response.status_code})
+        if self._client and not self._client.is_closed:
+          response = await self._client.post(url, json=payload, headers=headers)
+        else:
+          async with httpx.AsyncClient(timeout=5.0) as temp_client:
+            response = await temp_client.post(url, json=payload, headers=headers)
+
+        if 200 <= response.status_code < 300:
+          logger.info(f"Successfully flushed spooled call {call_id}; removing file.")
+          file_path.unlink(missing_ok=True)
+          flushed_count += 1
+        elif response.status_code in (400, 401, 413, 422):
+          logger.error(f"Permanent rejection on flush for {call_id} ({response.status_code}); moving to rejected/")
+          self._atomic_spool(call_id, payload, REJECTED_DIR)
+          file_path.unlink(missing_ok=True)
+        else:
+          logger.warning(f"Failed transient flush for {call_id} (status={response.status_code}); keeping file.")
       except Exception as exc:
-        logger.error("Error reading or sending spooled file", extra={"file": file_path.name, "error": str(exc)})
+        logger.error(f"Error processing spooled file {file_path.name}: {exc}")
 
-    return flushed
-
-
-if __name__ == "__main__":
-  import sys
-  from bot.config import settings
-
-  logging.basicConfig(level=logging.INFO)
-  if "--flush" in sys.argv:
-    reporter = CallReporter(settings.worker_base_url, settings.ingest_token)
-    count = asyncio.run(reporter.flush_spool())
-    print(f"Flushed {count} spooled call(s).")
+    return flushed_count

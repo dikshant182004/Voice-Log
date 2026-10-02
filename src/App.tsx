@@ -25,9 +25,9 @@ export function App() {
     setCurrentTab('live');
   };
 
-  const handleCallFinished = (call: CallDetailResponse) => {
+  const handleCallFinished = (callId: string) => {
     // Automatically select the newly finished call to inspect its transcript and metrics
-    setSelectedCallId(call.call.id);
+    setSelectedCallId(callId);
   };
 
   return (

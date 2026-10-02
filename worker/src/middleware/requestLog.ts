@@ -9,11 +9,6 @@ export const requestLogMiddleware: MiddlewareHandler = async (c, next) => {
   c.set('requestId', requestId);
   c.res.headers.set('X-Request-ID', requestId);
 
-  let routePattern = c.req.path;
-  if (c.req.matchedRoutes && c.req.matchedRoutes.length > 0) {
-    routePattern = c.req.matchedRoutes[0].path;
-  }
-
   try {
     await next();
   } finally {
@@ -21,6 +16,19 @@ export const requestLogMiddleware: MiddlewareHandler = async (c, next) => {
     const status = c.res.status;
     const callId = c.get('callId');
     const errorCode = c.get('errorCode');
+
+    // Use c.req.routePath (set after routing completes) or the last matched route
+    let routePattern = c.req.routePath;
+    if (!routePattern || routePattern === '/*') {
+      if (c.req.matchedRoutes && c.req.matchedRoutes.length > 0) {
+        // Pick the last matched route (the specific route, not the global /* middleware)
+        const last = c.req.matchedRoutes[c.req.matchedRoutes.length - 1];
+        routePattern = last.path;
+      }
+    }
+    if (!routePattern || routePattern === '/*') {
+      routePattern = c.req.path;
+    }
 
     logRequest(
       requestId,

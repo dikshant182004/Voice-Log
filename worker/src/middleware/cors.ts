@@ -1,26 +1,29 @@
 import { MiddlewareHandler } from 'hono';
 
-export const corsMiddleware: MiddlewareHandler = async (c, next) => {
-  const env = c.env as { ALLOWED_ORIGIN?: string };
-  const origin = c.req.header('Origin');
-  const allowedOriginPattern = env.ALLOWED_ORIGIN || '*';
+const LOCALHOST_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
-  // Determine allowed origin: allow localhost in development or matches configured origin
-  let allowHeader = '*';
-  if (allowedOriginPattern !== '*') {
-    if (origin && (origin === allowedOriginPattern || origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+export const corsMiddleware: MiddlewareHandler = async (c, next) => {
+  const env = c.env as { ALLOWED_ORIGIN?: string; ALLOW_DEV_ORIGINS?: string };
+  const origin = c.req.header('Origin');
+  const configuredOrigin = (env.ALLOWED_ORIGIN || '').trim();
+  const allowDev = env.ALLOW_DEV_ORIGINS !== 'false'; // default true in dev unless explicitly disabled
+
+  let allowHeader = '';
+
+  if (origin) {
+    if (configuredOrigin && (origin === configuredOrigin || configuredOrigin === '*')) {
       allowHeader = origin;
-    } else {
-      allowHeader = allowedOriginPattern;
+    } else if (allowDev && LOCALHOST_REGEX.test(origin)) {
+      allowHeader = origin;
     }
-  } else if (origin) {
-    allowHeader = origin;
   }
 
-  c.res.headers.set('Access-Control-Allow-Origin', allowHeader);
-  c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
-  c.res.headers.set('Access-Control-Max-Age', '86400');
+  if (allowHeader) {
+    c.res.headers.set('Access-Control-Allow-Origin', allowHeader);
+    c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
+    c.res.headers.set('Access-Control-Max-Age', '86400');
+  }
 
   if (c.req.method === 'OPTIONS') {
     return c.body(null, 204);

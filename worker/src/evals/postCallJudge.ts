@@ -24,19 +24,31 @@ export async function runPostCallJudge(
 ): Promise<void> {
   // Rule: Skip eval if transcript has fewer than 2 turns
   if (!transcript || transcript.length < 2) {
+    logEvent('info', requestId, 'call.eval_skipped' as any, 'Post-call judge skipped: transcript has fewer than 2 turns', {
+      callId,
+      metadata: { turns: transcript ? transcript.length : 0 },
+    });
     return;
   }
 
   const groqApiKey = env.GROQ_API_KEY;
   if (!groqApiKey) {
-    // If no GROQ_API_KEY configured, skip evaluation silently without crashing
+    logEvent('info', requestId, 'call.eval_skipped' as any, 'Post-call judge skipped: GROQ_API_KEY not configured', {
+      callId,
+    });
     return;
   }
 
-  // Sanitize and delimit transcript to prevent prompt injection
+  // Sanitize and escape transcript text to prevent delimiter breakouts
   const formattedTranscript = transcript
-    .slice(-20) // Keep last 20 turns max for prompt budget
-    .map((t) => `${t.role.toUpperCase()}: ${t.text.replace(/[\r\n]+/g, ' ')}${t.interrupted ? ' [INTERRUPTED]' : ''}`)
+    .slice(-20)
+    .map((t) => {
+      // Escape </TRANSCRIPT> to prevent prompt injection breakouts
+      const sanitizedText = t.text
+        .replace(/<\/TRANSCRIPT>/gi, '[ESCAPED_TAG]')
+        .replace(/[\r\n]+/g, ' ');
+      return `${t.role.toUpperCase()}: ${sanitizedText}${t.interrupted ? ' [INTERRUPTED]' : ''}`;
+    })
     .join('\n');
 
   const systemPrompt = `You are an expert conversational AI evaluator. Your job is to analyze the provided voice call transcript and generate an objective evaluation in strict JSON.
@@ -66,7 +78,7 @@ Produce a JSON object matching this exact schema:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'llama-3.1-8b-instant', // Small, fast judge model for cost and speed
+          model: 'llama-3.1-8b-instant',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -101,7 +113,8 @@ Produce a JSON object matching this exact schema:
       };
     } catch (err: any) {
       if (retryCount === 0) {
-        // Retry once on failure/malformed output
+        // Backoff 500ms before retrying once
+        await new Promise((res) => setTimeout(res, 500));
         return queryJudge(1);
       }
       logEvent('warn', requestId, 'call.eval_failed', 'Post-call judge evaluation failed', {

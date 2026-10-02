@@ -12,17 +12,36 @@ export interface WorkerEnv {
   INGEST_TOKEN?: string;
   GROQ_API_KEY?: string;
   ALLOWED_ORIGIN?: string;
+  ALLOW_DEV_ORIGINS?: string;
 }
 
 export const callsRouter = new Hono<{ Bindings: WorkerEnv; Variables: { requestId: string; callId?: string } }>();
 
+const MAX_BODY_BYTES = 512 * 1024; // 512 KB
+
 /**
  * POST /calls - Save a finished call record.
  * Authenticated via Bearer <INGEST_TOKEN>.
- * Idempotent: safe to retry if network dropped.
+ * Atomic & Idempotent: safe to retry if network dropped.
  */
 callsRouter.post('/', requireIngestAuth, async (c) => {
   const requestId = c.get('requestId');
+
+  // Enforce body size limit
+  const contentLength = parseInt(c.req.header('Content-Length') || '0', 10);
+  if (contentLength > MAX_BODY_BYTES) {
+    return c.json(
+      {
+        error: {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: `Request body exceeds maximum size of ${MAX_BODY_BYTES / 1024}KB`,
+          request_id: requestId,
+        },
+      },
+      413
+    );
+  }
+
   const rawBody = await c.req.json().catch(() => null);
 
   if (!rawBody) {
@@ -83,7 +102,6 @@ callsRouter.post('/', requireIngestAuth, async (c) => {
         runPostCallJudge(c.env, callId, requestId, payload.transcript)
       );
     } else {
-      // In dev/test environments without waitUntil, run without blocking
       runPostCallJudge(c.env, callId, requestId, payload.transcript).catch(() => {});
     }
   } catch (err) {

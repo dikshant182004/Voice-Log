@@ -1,11 +1,10 @@
 import React from 'react';
-import { Phone, PhoneOff, Mic, MicOff, Volume2, ShieldAlert, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, AlertCircle, Info } from 'lucide-react';
 import { useVoiceCall } from '../hooks/useVoiceCall';
 import { AudioVisualizer } from '../components/AudioVisualizer';
-import { CallDetailResponse } from '../types';
 
 interface LiveCallViewProps {
-  onCallFinished: (call: CallDetailResponse) => void;
+  onCallFinished: (callId: string) => void;
 }
 
 export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) => {
@@ -16,10 +15,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
     isMuted,
     errorMessage,
     analyser,
-    liveTurns,
-    liveMetrics,
     startCall,
-    simulateCall,
     endCall,
     toggleMute,
   } = useVoiceCall(onCallFinished);
@@ -31,23 +27,32 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
   };
 
   const isLive = callState === 'live' || callState === 'connecting' || callState === 'requesting_mic';
+  const botUrl = import.meta.env.VITE_BOT_URL || 'http://127.0.0.1:8765';
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      {/* Header */}
+    <div className="max-w-2xl mx-auto space-y-6">
       <div className="text-center space-y-1 pb-4 border-b border-neutral-200">
-        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Interactive Voice AI Agent</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Voice AI Call Session</h1>
         <p className="text-sm text-neutral-500 max-w-lg mx-auto">
-          Start a real microphone call with WebRTC streaming STT (Deepgram), fast LLM (Groq), and TTS (Cartesia).
+          Talk to the local Pipecat agent via browser WebRTC. Use headphones to prevent acoustic echo.
         </p>
+      </div>
+
+      {/* Bot Server Connection Notice */}
+      <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs text-neutral-600 flex items-start gap-2.5">
+        <Info className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
+        <div>
+          <span>Signaling target: <code className="font-mono text-neutral-800">{botUrl}</code>.</span>
+          <span className="block text-neutral-500 mt-0.5">Ensure the local bot is running via <code className="font-mono">python -m bot.bot</code> before starting a call.</span>
+        </div>
       </div>
 
       {/* Error state */}
       {errorMessage ? (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-3">
-          <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <span className="font-semibold block">Microphone or Connection Issue</span>
+            <span className="font-semibold block">Call Connection Error</span>
             <p>{errorMessage}</p>
           </div>
         </div>
@@ -55,7 +60,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
 
       {/* Main Call Control Panel */}
       <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-8 shadow-xs text-center space-y-6">
-        {/* Status & Timer */}
+        {/* Status Badge & Duration */}
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-700">
             <span
@@ -77,11 +82,11 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
           </div>
 
           {callId ? (
-            <div className="text-xs font-mono text-neutral-400">Session ID: {callId}</div>
+            <div className="text-xs font-mono text-neutral-400">Call ID: {callId}</div>
           ) : null}
         </div>
 
-        {/* Live Audio Waveform Analyser */}
+        {/* Real-time Microphone Waveform */}
         <AudioVisualizer analyser={analyser} isActive={callState === 'live' && !isMuted} />
 
         {/* Action Controls */}
@@ -92,7 +97,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
               className="px-6 py-3 text-sm font-semibold text-white bg-neutral-900 hover:bg-neutral-800 rounded-xl shadow-sm transition-all flex items-center gap-2.5"
             >
               <Phone className="w-4 h-4" />
-              <span>Start Microphone Call</span>
+              <span>Start Call</span>
             </button>
           ) : (
             <>
@@ -113,55 +118,18 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
                 className="px-6 py-3 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm transition-all flex items-center gap-2.5"
               >
                 <PhoneOff className="w-4 h-4" />
-                <span>Hang Up Call</span>
+                <span>End Call</span>
               </button>
             </>
           )}
-
-          {!isLive ? (
-            <button
-              onClick={simulateCall}
-              className="px-4 py-3 text-sm font-medium text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-xl transition-all flex items-center gap-2"
-              title="Runs a simulated benchmark call with real latencies"
-            >
-              <Sparkles className="w-4 h-4 text-emerald-600" />
-              <span>Run Benchmark Simulation</span>
-            </button>
-          ) : null}
         </div>
 
         {callState === 'reported' ? (
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center justify-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Call finished and persisted to database. View in the Calls tab!</span>
+          <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-600">
+            Session ended. Ingestion payload dispatched to Cloudflare Worker.
           </div>
         ) : null}
       </div>
-
-      {/* Live Transcript Stream */}
-      {liveTurns.length > 0 ? (
-        <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-xs space-y-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Live Turn Stream</h2>
-          <div className="space-y-3">
-            {liveTurns.map((turn) => (
-              <div
-                key={turn.turn_index}
-                className={`p-3 rounded-lg text-sm ${
-                  turn.role === 'assistant'
-                    ? 'bg-neutral-50 text-neutral-900 border border-neutral-200'
-                    : 'bg-neutral-900 text-white'
-                }`}
-              >
-                <div className="flex items-center justify-between text-[11px] opacity-75 mb-1">
-                  <span className="font-semibold uppercase">{turn.role}</span>
-                  <span className="font-mono tabular-nums">{turn.ts_ms}ms</span>
-                </div>
-                <p>{turn.text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 };

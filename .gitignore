@@ -23,19 +23,19 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+bot/env/
+bot/build/
+bot/develop-eggs/
+bot/dist/
+bot/downloads/
+bot/eggs/
+bot/.eggs/
+bot/lib/
+bot/lib64/
+bot/parts/
+bot/sdist/
+bot/var/
+bot/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -44,6 +44,12 @@ wheels/
 htmlcov/
 bot/spool/*.json
 !bot/spool/.gitkeep
+bot/spool/rejected/*.json
+!bot/spool/rejected/.gitkeep
+!worker/src/lib/
+
+# Evals reports (generated artifact)
+evals/report.json
 
 # Logs & OS
 npm-debug.log*

@@ -83,6 +83,7 @@ export const StepMetricStatsSchema = z.object({
   avg_ms: z.number().nullable(),
   p50_ms: z.number().nullable(),
   p95_ms: z.number().nullable(),
+  sample_size: z.number().int().nonnegative().optional().default(0),
 });
 
 export const AggregateMetricsSchema = z.object({

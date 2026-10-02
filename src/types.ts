@@ -52,6 +52,7 @@ export interface StepMetricStats {
   avg_ms: number | null;
   p50_ms: number | null;
   p95_ms: number | null;
+  sample_size?: number;
 }
 
 export interface AggregateMetrics {

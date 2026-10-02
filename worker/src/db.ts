@@ -1,53 +1,41 @@
-export interface D1PreparedStatement {
-  bind(...values: any[]): D1PreparedStatement;
-  first<T = any>(colName?: string): Promise<T | null>;
-  all<T = any>(): Promise<{ results: T[] }>;
-  run(): Promise<{ success: boolean; meta?: any }>;
-}
+import type { D1Database } from '@cloudflare/workers-types';
+export type { D1Database };
 
-export interface D1Database {
-  prepare(query: string): D1PreparedStatement;
-  batch(statements: any[]): Promise<any[]>;
-}
 import {
   PostCallPayload,
-  CallListItem,
   CallsListResponse,
   CallDetailResponse,
   CallStatsResponse,
   CallEval,
-  StepMetricStatsSchema,
 } from './schemas';
 
 /**
- * Calculates p50 and p95 from an array of numbers.
+ * Calculates average and nearest-rank p50 and p95 from a sorted array of numbers.
  */
-export function calculatePercentiles(values: number[]): { avg: number | null; p50: number | null; p95: number | null } {
-  if (!values.length) return { avg: null, p50: null, p95: null };
-  const sorted = [...values].sort((a, b) => a - b);
-  const sum = sorted.reduce((acc, val) => acc + val, 0);
-  const avg = Math.round((sum / sorted.length) * 10) / 10;
+export function calculatePercentiles(sortedValues: number[]): { avg: number | null; p50: number | null; p95: number | null; sample_size: number } {
+  if (!sortedValues || sortedValues.length === 0) {
+    return { avg: null, p50: null, p95: null, sample_size: 0 };
+  }
+  const sum = sortedValues.reduce((acc, val) => acc + val, 0);
+  const avg = Math.round((sum / sortedValues.length) * 10) / 10;
 
-  const p50Index = Math.floor(sorted.length * 0.5);
-  const p95Index = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  // Nearest-rank method (N-1 index for 0-indexed arrays)
+  const n = sortedValues.length;
+  const p50Idx = Math.max(0, Math.min(n - 1, Math.ceil(0.50 * n) - 1));
+  const p95Idx = Math.max(0, Math.min(n - 1, Math.ceil(0.95 * n) - 1));
 
   return {
     avg,
-    p50: sorted[p50Index],
-    p95: sorted[p95Index],
+    p50: sortedValues[p50Idx],
+    p95: sortedValues[p95Idx],
+    sample_size: n,
   };
 }
 
-/**
- * Encodes cursor object to opaque base64 string.
- */
 function encodeCursor(startedAt: string, id: string): string {
   return btoa(JSON.stringify({ s: startedAt, id }));
 }
 
-/**
- * Decodes opaque base64 string to cursor object.
- */
 function decodeCursor(cursor: string): { startedAt: string; id: string } | null {
   try {
     const raw = atob(cursor);
@@ -74,34 +62,23 @@ export const callRepo: CallRepository = {
     const callId = payload.call_id;
     const createdAt = new Date().toISOString();
 
-    // Check if call already exists (idempotency check)
-    const existing = await db
-      .prepare('SELECT id FROM calls WHERE id = ? LIMIT 1')
-      .bind(callId)
-      .first<{ id: string }>();
-
-    if (existing) {
-      return { duplicate: true, callId };
-    }
-
-    // Extract summary stats to denormalize onto the call row
     const turnCount = payload.transcript.length;
     const interruptionCount = payload.transcript.filter((t) => t.interrupted).length;
 
-    // Calculate voice-to-voice percentiles from turn metrics
     const v2vValues = payload.metrics
       .map((m) => m.voice_to_voice_ms)
-      .filter((v): v is number => typeof v === 'number' && v > 0);
+      .filter((v): v is number => typeof v === 'number' && v > 0)
+      .sort((a, b) => a - b);
     const { p50: p50V2v, p95: p95V2v } = calculatePercentiles(v2vValues);
 
     const configJson = JSON.stringify(payload.config);
     const usageJson = JSON.stringify(payload.usage);
 
-    // Prepare batch operations for atomic insert
-    const statements: any[] = [];
+    // Build the atomic batch statements
+    const batchStatements: any[] = [];
 
-    // 1. Insert Call
-    statements.push(
+    // 1. Insert Call row with ON CONFLICT DO NOTHING
+    batchStatements.push(
       db
         .prepare(
           `INSERT INTO calls (
@@ -128,9 +105,9 @@ export const callRepo: CallRepository = {
         )
     );
 
-    // 2. Insert Transcripts
+    // 2. Insert Transcript turns
     for (const t of payload.transcript) {
-      statements.push(
+      batchStatements.push(
         db
           .prepare(
             `INSERT INTO transcripts (call_id, turn_index, role, text, ts_ms, interrupted)
@@ -143,7 +120,7 @@ export const callRepo: CallRepository = {
 
     // 3. Insert Metrics
     for (const m of payload.metrics) {
-      statements.push(
+      batchStatements.push(
         db
           .prepare(
             `INSERT INTO call_metrics (call_id, turn_index, stt_ms, llm_ttfb_ms, tts_ttfb_ms, voice_to_voice_ms)
@@ -161,14 +138,14 @@ export const callRepo: CallRepository = {
       );
     }
 
-    // Execute in atomic batches (chunking into groups of 50 to stay well under D1 limits)
-    const CHUNK_SIZE = 50;
-    for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
-      const chunk = statements.slice(i, i + CHUNK_SIZE);
-      await db.batch(chunk);
-    }
+    // Execute everything in a single atomic D1 transaction
+    const batchResults = await db.batch(batchStatements);
 
-    return { duplicate: false, callId };
+    // Check meta.changes on the first statement (calls table insert)
+    const callInsertMeta = (batchResults[0] as any)?.meta;
+    const isDuplicate = callInsertMeta?.changes === 0;
+
+    return { duplicate: isDuplicate, callId };
   },
 
   async listCalls(db: D1Database, limit: number, cursor?: string): Promise<CallsListResponse> {
@@ -230,8 +207,14 @@ export const callRepo: CallRepository = {
   },
 
   async getCallById(db: D1Database, callId: string): Promise<CallDetailResponse | null> {
+    // Explicit columns instead of SELECT *
     const callRow = await db
-      .prepare('SELECT * FROM calls WHERE id = ? LIMIT 1')
+      .prepare(
+        `SELECT id, started_at, ended_at, duration_ms, status, end_reason,
+                config_json, turn_count, interruption_count, p50_v2v_ms, p95_v2v_ms,
+                usage_json, created_at
+         FROM calls WHERE id = ? LIMIT 1`
+      )
       .bind(callId)
       .first<any>();
 
@@ -239,7 +222,7 @@ export const callRepo: CallRepository = {
       return null;
     }
 
-    // Query transcripts, metrics, and evals in parallel
+    // Query transcripts, metrics, and evals in parallel with explicit columns
     const [transcriptRes, metricsRes, evalRes] = await Promise.all([
       db
         .prepare('SELECT turn_index, role, text, ts_ms, interrupted FROM transcripts WHERE call_id = ? ORDER BY turn_index ASC')
@@ -250,7 +233,7 @@ export const callRepo: CallRepository = {
         .bind(callId)
         .all<any>(),
       db
-        .prepare('SELECT * FROM call_evals WHERE call_id = ? LIMIT 1')
+        .prepare('SELECT call_id, scores_json, summary, sentiment, flags_json, judge_model, created_at FROM call_evals WHERE call_id = ? LIMIT 1')
         .bind(callId)
         .first<any>(),
     ]);
@@ -271,11 +254,10 @@ export const callRepo: CallRepository = {
       voice_to_voice_ms: m.voice_to_voice_ms !== null ? Number(m.voice_to_voice_ms) : null,
     }));
 
-    // Compute aggregate metrics
-    const v2vList = metrics.map((m: any) => m.voice_to_voice_ms).filter((v: any): v is number => typeof v === 'number');
-    const sttList = metrics.map((m: any) => m.stt_ms).filter((v: any): v is number => typeof v === 'number');
-    const llmList = metrics.map((m: any) => m.llm_ttfb_ms).filter((v: any): v is number => typeof v === 'number');
-    const ttsList = metrics.map((m: any) => m.tts_ttfb_ms).filter((v: any): v is number => typeof v === 'number');
+    const v2vList = metrics.map((m: any) => m.voice_to_voice_ms).filter((v: any): v is number => typeof v === 'number').sort((a, b) => a - b);
+    const sttList = metrics.map((m: any) => m.stt_ms).filter((v: any): v is number => typeof v === 'number').sort((a, b) => a - b);
+    const llmList = metrics.map((m: any) => m.llm_ttfb_ms).filter((v: any): v is number => typeof v === 'number').sort((a, b) => a - b);
+    const ttsList = metrics.map((m: any) => m.tts_ttfb_ms).filter((v: any): v is number => typeof v === 'number').sort((a, b) => a - b);
 
     const v2vStats = calculatePercentiles(v2vList);
     const sttStats = calculatePercentiles(sttList);
@@ -298,12 +280,18 @@ export const callRepo: CallRepository = {
       try {
         if (evalRes.scores_json) scores = JSON.parse(evalRes.scores_json);
       } catch {}
+
+      let flags: string[] = [];
+      try {
+        if (evalRes.flags_json) flags = JSON.parse(evalRes.flags_json);
+      } catch {}
+
       parsedEval = {
         call_id: evalRes.call_id,
         summary: evalRes.summary || '',
         sentiment: evalRes.sentiment || 'neutral',
         scores,
-        flags: [],
+        flags,
         judge_model: evalRes.judge_model || 'groq',
         created_at: evalRes.created_at,
       };
@@ -328,10 +316,10 @@ export const callRepo: CallRepository = {
       transcript,
       metrics,
       aggregate_metrics: {
-        voice_to_voice: { avg_ms: v2vStats.avg, p50_ms: v2vStats.p50, p95_ms: v2vStats.p95 },
-        stt: { avg_ms: sttStats.avg, p50_ms: sttStats.p50, p95_ms: sttStats.p95 },
-        llm_ttfb: { avg_ms: llmStats.avg, p50_ms: llmStats.p50, p95_ms: llmStats.p95 },
-        tts_ttfb: { avg_ms: ttsStats.avg, p50_ms: ttsStats.p50, p95_ms: ttsStats.p95 },
+        voice_to_voice: { avg_ms: v2vStats.avg, p50_ms: v2vStats.p50, p95_ms: v2vStats.p95, sample_size: v2vStats.sample_size },
+        stt: { avg_ms: sttStats.avg, p50_ms: sttStats.p50, p95_ms: sttStats.p95, sample_size: sttStats.sample_size },
+        llm_ttfb: { avg_ms: llmStats.avg, p50_ms: llmStats.p50, p95_ms: llmStats.p95, sample_size: llmStats.sample_size },
+        tts_ttfb: { avg_ms: ttsStats.avg, p50_ms: ttsStats.p50, p95_ms: ttsStats.p95, sample_size: ttsStats.sample_size },
       },
       eval: parsedEval,
     };
@@ -341,7 +329,6 @@ export const callRepo: CallRepository = {
     const windowDays = Math.max(1, Math.min(days, 90));
     const sinceDate = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
 
-    // 1. Fetch volume and aggregate counters
     const summaryQuery = `
       SELECT
         COUNT(*) as total_calls,
@@ -366,7 +353,6 @@ export const callRepo: CallRepository = {
     const interruptionRatePct = totalTurns > 0 ? Math.round((totalInterruptions / totalTurns) * 1000) / 10 : 0;
     const avgDurationMs = totalCalls > 0 ? Math.round(totalDuration / totalCalls) : 0;
 
-    // 2. Fetch daily volume
     const dailyVolumeQuery = `
       SELECT
         SUBSTR(started_at, 1, 10) as date,
@@ -384,21 +370,30 @@ export const callRepo: CallRepository = {
       avg_duration_ms: Math.round(Number(r.avg_duration_ms)),
     }));
 
-    // 3. Fetch metric values for percentile calculations (ordered limit to keep memory bounded)
-    const metricsQuery = `
-      SELECT m.stt_ms, m.llm_ttfb_ms, m.tts_ttfb_ms, m.voice_to_voice_ms
-      FROM call_metrics m
-      JOIN calls c ON m.call_id = c.id
-      WHERE c.started_at >= ?
-      LIMIT 2000
-    `;
-    const metricsRows = await db.prepare(metricsQuery).bind(sinceDate).all<any>();
-    const results = metricsRows.results || [];
+    // Bounded ordered slices for percentile calculations (up to 1000 rows each)
+    const [v2vRows, sttRows, llmRows, ttsRows] = await Promise.all([
+      db
+        .prepare(`SELECT m.voice_to_voice_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.voice_to_voice_ms IS NOT NULL ORDER BY m.voice_to_voice_ms ASC LIMIT 1000`)
+        .bind(sinceDate)
+        .all<any>(),
+      db
+        .prepare(`SELECT m.stt_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.stt_ms IS NOT NULL ORDER BY m.stt_ms ASC LIMIT 1000`)
+        .bind(sinceDate)
+        .all<any>(),
+      db
+        .prepare(`SELECT m.llm_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.llm_ttfb_ms IS NOT NULL ORDER BY m.llm_ttfb_ms ASC LIMIT 1000`)
+        .bind(sinceDate)
+        .all<any>(),
+      db
+        .prepare(`SELECT m.tts_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.tts_ttfb_ms IS NOT NULL ORDER BY m.tts_ttfb_ms ASC LIMIT 1000`)
+        .bind(sinceDate)
+        .all<any>(),
+    ]);
 
-    const sttList = results.map((r: any) => r.stt_ms).filter((v: any): v is number => typeof v === 'number');
-    const llmList = results.map((r: any) => r.llm_ttfb_ms).filter((v: any): v is number => typeof v === 'number');
-    const ttsList = results.map((r: any) => r.tts_ttfb_ms).filter((v: any): v is number => typeof v === 'number');
-    const v2vList = results.map((r: any) => r.voice_to_voice_ms).filter((v: any): v is number => typeof v === 'number');
+    const v2vList = (v2vRows.results || []).map((r: any) => Number(r.voice_to_voice_ms));
+    const sttList = (sttRows.results || []).map((r: any) => Number(r.stt_ms));
+    const llmList = (llmRows.results || []).map((r: any) => Number(r.llm_ttfb_ms));
+    const ttsList = (ttsRows.results || []).map((r: any) => Number(r.tts_ttfb_ms));
 
     const v2vStats = calculatePercentiles(v2vList);
     const sttStats = calculatePercentiles(sttList);
@@ -413,10 +408,10 @@ export const callRepo: CallRepository = {
       interruption_rate_pct: interruptionRatePct,
       avg_duration_ms: avgDurationMs,
       latency_percentiles: {
-        voice_to_voice: { avg_ms: v2vStats.avg, p50_ms: v2vStats.p50, p95_ms: v2vStats.p95 },
-        stt: { avg_ms: sttStats.avg, p50_ms: sttStats.p50, p95_ms: sttStats.p95 },
-        llm_ttfb: { avg_ms: llmStats.avg, p50_ms: llmStats.p50, p95_ms: llmStats.p95 },
-        tts_ttfb: { avg_ms: ttsStats.avg, p50_ms: ttsStats.p50, p95_ms: ttsStats.p95 },
+        voice_to_voice: { avg_ms: v2vStats.avg, p50_ms: v2vStats.p50, p95_ms: v2vStats.p95, sample_size: v2vStats.sample_size },
+        stt: { avg_ms: sttStats.avg, p50_ms: sttStats.p50, p95_ms: sttStats.p95, sample_size: sttStats.sample_size },
+        llm_ttfb: { avg_ms: llmStats.avg, p50_ms: llmStats.p50, p95_ms: llmStats.p95, sample_size: llmStats.sample_size },
+        tts_ttfb: { avg_ms: ttsStats.avg, p50_ms: ttsStats.p50, p95_ms: ttsStats.p95, sample_size: ttsStats.sample_size },
       },
       daily_volume: dailyVolume,
     };
@@ -424,14 +419,17 @@ export const callRepo: CallRepository = {
 
   async insertEval(db: D1Database, evaluation: CallEval) {
     const scoresJson = JSON.stringify(evaluation.scores);
+    const flagsJson = JSON.stringify(evaluation.flags || []);
+
     await db
       .prepare(
-        `INSERT INTO call_evals (call_id, scores_json, summary, sentiment, judge_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO call_evals (call_id, scores_json, summary, sentiment, flags_json, judge_model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(call_id) DO UPDATE SET
            scores_json = excluded.scores_json,
            summary = excluded.summary,
            sentiment = excluded.sentiment,
+           flags_json = excluded.flags_json,
            judge_model = excluded.judge_model,
            created_at = excluded.created_at`
       )
@@ -440,6 +438,7 @@ export const callRepo: CallRepository = {
         scoresJson,
         evaluation.summary,
         evaluation.sentiment,
+        flagsJson,
         evaluation.judge_model,
         evaluation.created_at
       )

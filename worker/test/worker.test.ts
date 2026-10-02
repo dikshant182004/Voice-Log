@@ -84,9 +84,11 @@ class MockD1Database {
   }
 
   async batch(statements: any[]) {
+    const results: any[] = [];
     for (const stmt of statements) {
       const q = stmt._query.toUpperCase();
       const b = stmt._bindings;
+      let changes = 1;
       if (q.includes('INSERT INTO CALLS')) {
         if (!this.calls.has(b[0])) {
           this.calls.set(b[0], {
@@ -104,28 +106,44 @@ class MockD1Database {
             usage_json: b[11],
             created_at: b[12],
           });
+          changes = 1;
+        } else {
+          changes = 0;
         }
       } else if (q.includes('INSERT INTO TRANSCRIPTS')) {
-        this.transcripts.push({
-          call_id: b[0],
-          turn_index: b[1],
-          role: b[2],
-          text: b[3],
-          ts_ms: b[4],
-          interrupted: b[5],
-        });
+        const exists = this.transcripts.some((t) => t.call_id === b[0] && t.turn_index === b[1]);
+        if (!exists) {
+          this.transcripts.push({
+            call_id: b[0],
+            turn_index: b[1],
+            role: b[2],
+            text: b[3],
+            ts_ms: b[4],
+            interrupted: b[5],
+          });
+          changes = 1;
+        } else {
+          changes = 0;
+        }
       } else if (q.includes('INSERT INTO CALL_METRICS')) {
-        this.metrics.push({
-          call_id: b[0],
-          turn_index: b[1],
-          stt_ms: b[2],
-          llm_ttfb_ms: b[3],
-          tts_ttfb_ms: b[4],
-          voice_to_voice_ms: b[5],
-        });
+        const exists = this.metrics.some((m) => m.call_id === b[0] && m.turn_index === b[1]);
+        if (!exists) {
+          this.metrics.push({
+            call_id: b[0],
+            turn_index: b[1],
+            stt_ms: b[2],
+            llm_ttfb_ms: b[3],
+            tts_ttfb_ms: b[4],
+            voice_to_voice_ms: b[5],
+          });
+          changes = 1;
+        } else {
+          changes = 0;
+        }
       }
+      results.push({ success: true, meta: { changes } });
     }
-    return statements.map(() => ({ success: true }));
+    return results;
   }
 }
 

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Clock, Zap, Cpu, Award, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Award, AlertCircle, RefreshCw, Clock } from 'lucide-react';
 import { CallDetailResponse } from '../types';
-import { apiClient } from '../api/client';
+import { apiClient, HttpError, NetworkError, ConfigurationError } from '../api/client';
 import { LatencyLineChart } from '../components/LatencyLineChart';
 
 interface CallDetailPageProps {
@@ -12,16 +12,32 @@ interface CallDetailPageProps {
 export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }) => {
   const [data, setData] = useState<CallDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchDetail = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       setIsLoading(true);
-      setError(null);
-      const res = await apiClient.getCall(callId);
+      setErrorMessage(null);
+      const res = await apiClient.getCall(callId, controller.signal);
       setData(res);
     } catch (err: any) {
-      setError(err.message || 'Failed to load call detail');
+      if (err.name === 'AbortError' || err.name === 'CanceledError') return;
+      if (err instanceof ConfigurationError) {
+        setErrorMessage(err.message);
+      } else if (err instanceof HttpError) {
+        setErrorMessage(`Server error ${err.status}: ${err.message}${err.requestId ? ` (Request ID: ${err.requestId})` : ''}`);
+      } else if (err instanceof NetworkError) {
+        setErrorMessage(`Failed to reach Cloudflare Worker: ${err.message}`);
+      } else {
+        setErrorMessage(err.message || 'Failed to retrieve call detail');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -29,29 +45,42 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
 
   useEffect(() => {
     fetchDetail();
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [callId]);
 
   if (isLoading) {
     return (
-      <div className="p-12 text-center space-y-3">
+      <div className="p-12 text-center space-y-3 bg-white border border-neutral-200 rounded-xl">
         <RefreshCw className="w-6 h-6 animate-spin text-neutral-400 mx-auto" />
-        <p className="text-xs text-neutral-500">Loading call session and telemetry...</p>
+        <p className="text-xs text-neutral-500">Retrieving call record and transcript from Cloudflare D1...</p>
       </div>
     );
   }
 
-  if (error || !data) {
+  if (errorMessage || !data) {
     return (
       <div className="p-12 text-center space-y-3 bg-white border border-neutral-200 rounded-xl">
         <AlertCircle className="w-8 h-8 text-rose-500 mx-auto" />
-        <h3 className="text-sm font-semibold text-neutral-900">Failed to load call</h3>
-        <p className="text-xs text-neutral-500">{error || 'Call not found'}</p>
-        <button
-          onClick={onBack}
-          className="px-3 py-1.5 text-xs text-neutral-700 bg-neutral-100 rounded-lg hover:bg-neutral-200"
-        >
-          Return to Calls
-        </button>
+        <h3 className="text-sm font-semibold text-neutral-900">Unable to load call record</h3>
+        <p className="text-xs text-neutral-500 max-w-md mx-auto">{errorMessage || 'Call not found'}</p>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => fetchDetail()}
+            className="px-3.5 py-1.5 text-xs text-neutral-700 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+          >
+            Retry
+          </button>
+          <button
+            onClick={onBack}
+            className="px-3.5 py-1.5 text-xs text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors"
+          >
+            Back to Calls
+          </button>
+        </div>
       </div>
     );
   }
@@ -87,7 +116,6 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
             </span>
           </h1>
 
-          {/* Unboxed Metadata */}
           <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500 pt-1">
             <span>Started: {new Date(call.started_at).toLocaleTimeString()}</span>
             <span aria-hidden="true">·</span>
@@ -101,7 +129,7 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
 
         {/* Model Pipeline Spec */}
         <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-200 text-xs space-y-1 font-mono">
-          <div className="text-neutral-500">Pipeline Config:</div>
+          <div className="text-neutral-500">Pipeline Configuration:</div>
           <div className="text-neutral-800">STT: <strong>{call.config.stt}</strong></div>
           <div className="text-neutral-800">LLM: <strong>{call.config.llm}</strong></div>
           <div className="text-neutral-800">TTS: <strong>{call.config.tts}</strong></div>
@@ -119,7 +147,7 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
         </div>
 
         <div className="bg-white border border-neutral-200 p-4 rounded-xl shadow-xs">
-          <span className="text-xs font-medium text-neutral-500">Deepgram STT (p50)</span>
+          <span className="text-xs font-medium text-neutral-500">STT (p50)</span>
           <div className="text-2xl font-bold font-mono tabular-nums text-neutral-900 mt-1">
             {formatMs(aggregate_metrics.stt.p50_ms)}
           </div>
@@ -127,7 +155,7 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
         </div>
 
         <div className="bg-white border border-neutral-200 p-4 rounded-xl shadow-xs">
-          <span className="text-xs font-medium text-neutral-500">Groq LLM TTFB (p50)</span>
+          <span className="text-xs font-medium text-neutral-500">LLM TTFB (p50)</span>
           <div className="text-2xl font-bold font-mono tabular-nums text-neutral-900 mt-1">
             {formatMs(aggregate_metrics.llm_ttfb.p50_ms)}
           </div>
@@ -135,7 +163,7 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
         </div>
 
         <div className="bg-white border border-neutral-200 p-4 rounded-xl shadow-xs">
-          <span className="text-xs font-medium text-neutral-500">Cartesia TTS TTFB (p50)</span>
+          <span className="text-xs font-medium text-neutral-500">TTS TTFB (p50)</span>
           <div className="text-2xl font-bold font-mono tabular-nums text-neutral-900 mt-1">
             {formatMs(aggregate_metrics.tts_ttfb.p50_ms)}
           </div>
@@ -143,30 +171,29 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
         </div>
       </div>
 
-      {/* Advanced Feature 2: Post-Call LLM Evaluation Card */}
+      {/* Post-Call LLM Evaluation Card */}
       <div className="bg-white border border-neutral-200 rounded-xl p-5 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
           <div className="flex items-center gap-2">
-            <Award className="w-4 h-4 text-emerald-600" />
-            <h2 className="text-sm font-semibold text-neutral-900">Post-Call Automated Evaluation (Groq LLM-as-Judge)</h2>
+            <Award className="w-4 h-4 text-neutral-700" />
+            <h2 className="text-sm font-semibold text-neutral-900">Post-Call Evaluation (LLM Judge)</h2>
           </div>
           {evaluation ? (
             <span className="text-xs font-medium text-neutral-500">
               Evaluated by <strong className="font-mono text-neutral-700">{evaluation.judge_model}</strong>
             </span>
           ) : (
-            <span className="text-xs text-amber-600 font-medium">Evaluation pending...</span>
+            <span className="text-xs text-neutral-400 font-medium">Evaluation pending</span>
           )}
         </div>
 
         {evaluation ? (
           <div className="space-y-4">
             <div>
-              <span className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Executive Summary</span>
+              <span className="text-xs text-neutral-400 font-medium uppercase tracking-wider">Summary</span>
               <p className="text-sm text-neutral-800 mt-1 leading-relaxed">{evaluation.summary}</p>
             </div>
 
-            {/* Score Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
               <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-200">
                 <span className="text-[11px] text-neutral-500">Task Completion</span>
@@ -176,14 +203,14 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
               </div>
 
               <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-200">
-                <span className="text-[11px] text-neutral-500">Conversational Tone</span>
+                <span className="text-[11px] text-neutral-500">Tone</span>
                 <div className="text-lg font-bold font-mono text-neutral-900">
                   {evaluation.scores.tone} / 5
                 </div>
               </div>
 
               <div className="bg-neutral-50 p-2.5 rounded-lg border border-neutral-200">
-                <span className="text-[11px] text-neutral-500">Spoken Relevance</span>
+                <span className="text-[11px] text-neutral-500">Relevance</span>
                 <div className="text-lg font-bold font-mono text-neutral-900">
                   {evaluation.scores.relevance} / 5
                 </div>
@@ -200,7 +227,7 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
 
             {evaluation.flags && evaluation.flags.length > 0 ? (
               <div className="flex items-center gap-2 pt-1 text-xs text-neutral-500">
-                <span>Observed Flags:</span>
+                <span>Flags:</span>
                 {evaluation.flags.map((f) => (
                   <span key={f} className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[11px] font-mono">
                     {f}
@@ -210,9 +237,9 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
             ) : null}
           </div>
         ) : (
-          <p className="text-xs text-neutral-500 italic">
-            Automated judge runs asynchronously via Worker ctx.waitUntil(). No eval recorded for short calls with &lt; 2 turns.
-          </p>
+          <div className="text-xs text-neutral-400 italic py-2">
+            No evaluation recorded for this call (either pending async completion or call had fewer than 2 turns).
+          </div>
         )}
       </div>
 
@@ -221,44 +248,48 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
         {/* Left: Chat-Style Transcript */}
         <div className="lg:col-span-6 bg-white border border-neutral-200 rounded-xl p-5 shadow-xs space-y-4">
           <h2 className="text-sm font-semibold text-neutral-900 pb-2 border-b border-neutral-100">
-            Turn Transcript ({transcript.length} turns)
+            Transcript ({transcript.length} turns)
           </h2>
 
-          <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-            {transcript.map((t) => {
-              const isAssistant = t.role === 'assistant';
+          {transcript.length === 0 ? (
+            <p className="text-xs text-neutral-400 italic">No transcript recorded for this session.</p>
+          ) : (
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+              {transcript.map((t) => {
+                const isAssistant = t.role === 'assistant';
 
-              return (
-                <div
-                  key={t.turn_index}
-                  className={`flex flex-col ${isAssistant ? 'items-start' : 'items-end'}`}
-                >
-                  <div className="flex items-center gap-2 text-[11px] text-neutral-400 mb-1">
-                    <span className="font-semibold text-neutral-700">
-                      {isAssistant ? 'Assistant (Pipecat)' : 'User (Browser)'}
-                    </span>
-                    <span>·</span>
-                    <span className="font-mono tabular-nums">{t.ts_ms}ms</span>
-                    {t.interrupted ? (
-                      <span className="text-amber-600 bg-amber-50 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-medium">
-                        Interrupted
-                      </span>
-                    ) : null}
-                  </div>
-
+                return (
                   <div
-                    className={`max-w-[85%] rounded-lg p-3 text-sm leading-relaxed ${
-                      isAssistant
-                        ? 'bg-neutral-100 text-neutral-900 rounded-tl-none'
-                        : 'bg-neutral-900 text-white rounded-tr-none'
-                    }`}
+                    key={t.turn_index}
+                    className={`flex flex-col ${isAssistant ? 'items-start' : 'items-end'}`}
                   >
-                    {t.text}
+                    <div className="flex items-center gap-2 text-[11px] text-neutral-400 mb-1">
+                      <span className="font-semibold text-neutral-700">
+                        {isAssistant ? 'Assistant' : 'User'}
+                      </span>
+                      <span>·</span>
+                      <span className="font-mono tabular-nums">{t.ts_ms}ms</span>
+                      {t.interrupted ? (
+                        <span className="text-amber-600 bg-amber-50 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-medium">
+                          Interrupted
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div
+                      className={`max-w-[85%] rounded-lg p-3 text-sm leading-relaxed ${
+                        isAssistant
+                          ? 'bg-neutral-100 text-neutral-900 rounded-tl-none'
+                          : 'bg-neutral-900 text-white rounded-tr-none'
+                      }`}
+                    >
+                      {t.text}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Right: Per-Turn Latency Table & Chart */}
@@ -267,13 +298,11 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
             Per-Turn Latency Breakdown
           </h2>
 
-          {/* SVG Line Chart */}
           <div className="bg-neutral-50/50 p-2 rounded-lg border border-neutral-100">
             <span className="text-[11px] font-medium text-neutral-500 mb-2 block">Voice-to-Voice Latency Over Time (ms)</span>
             <LatencyLineChart metrics={metrics} />
           </div>
 
-          {/* Data Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -286,17 +315,23 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100 font-mono tabular-nums">
-                {metrics.map((m) => (
-                  <tr key={m.turn_index} className="hover:bg-neutral-50">
-                    <td className="py-2 font-sans font-medium text-neutral-700">Turn {m.turn_index}</td>
-                    <td className="py-2 text-right text-neutral-600">{formatMs(m.stt_ms)}</td>
-                    <td className="py-2 text-right text-neutral-600">{formatMs(m.llm_ttfb_ms)}</td>
-                    <td className="py-2 text-right text-neutral-600">{formatMs(m.tts_ttfb_ms)}</td>
-                    <td className="py-2 text-right font-semibold text-emerald-700">
-                      {formatMs(m.voice_to_voice_ms)}
-                    </td>
+                {metrics.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-4 text-center text-neutral-400 italic">No per-turn metrics recorded.</td>
                   </tr>
-                ))}
+                ) : (
+                  metrics.map((m) => (
+                    <tr key={m.turn_index} className="hover:bg-neutral-50">
+                      <td className="py-2 font-sans font-medium text-neutral-700">Turn {m.turn_index}</td>
+                      <td className="py-2 text-right text-neutral-600">{formatMs(m.stt_ms)}</td>
+                      <td className="py-2 text-right text-neutral-600">{formatMs(m.llm_ttfb_ms)}</td>
+                      <td className="py-2 text-right text-neutral-600">{formatMs(m.tts_ttfb_ms)}</td>
+                      <td className="py-2 text-right font-semibold text-neutral-900">
+                        {formatMs(m.voice_to_voice_ms)}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
