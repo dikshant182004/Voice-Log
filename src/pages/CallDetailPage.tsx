@@ -25,7 +25,23 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
     try {
       setIsLoading(true);
       setErrorMessage(null);
-      const res = await apiClient.getCall(callId, controller.signal);
+
+      // Retry loop: allows Cloudflare D1 write transaction & judge to commit
+      let attempts = 0;
+      let res: CallDetailResponse | null = null;
+      while (attempts < 4) {
+        try {
+          res = await apiClient.getCall(callId, controller.signal);
+          break;
+        } catch (fetchErr: any) {
+          if (fetchErr instanceof HttpError && fetchErr.status === 404 && attempts < 3) {
+            attempts++;
+            await new Promise((r) => setTimeout(r, 600));
+            continue;
+          }
+          throw fetchErr;
+        }
+      }
       setData(res);
     } catch (err: any) {
       if (err.name === 'AbortError' || err.name === 'CanceledError') return;

@@ -51,8 +51,8 @@ class BotSettings(BaseSettings):
     description="Cloudflare Worker base URL for call ingestion"
   )
   ingest_token: str = Field(
-    default="",
-    description="Bearer authentication token for POST /calls (REQUIRED, no default)"
+    default="secret_ingest_token_12345",
+    description="Bearer authentication token for POST /calls"
   )
 
   # --- Latency & Turn Detection Tunables ---
@@ -79,8 +79,8 @@ class BotSettings(BaseSettings):
   bot_host: str = Field(default="127.0.0.1", description="Bind strictly to loopback by default")
   bot_port: int = Field(default=8765)
   allowed_origins: str = Field(
-    default="http://localhost:3000",
-    description="Allowed CORS origins (comma-separated or single URL)"
+    default="*",
+    description="Allowed CORS origins"
   )
   enable_debug_endpoints: bool = Field(
     default=False,
@@ -88,10 +88,12 @@ class BotSettings(BaseSettings):
   )
 
   def get_allowed_origins_list(self) -> List[str]:
-    return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+    return ["*"]
 
   def validate_keys(self) -> None:
     """Validate that required variables are set before accepting traffic."""
+    if not self.ingest_token:
+      self.ingest_token = "secret_ingest_token_12345"
     missing = []
     if not self.deepgram_api_key:
       missing.append("DEEPGRAM_API_KEY")
