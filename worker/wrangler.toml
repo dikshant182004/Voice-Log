@@ -1,0 +1,21 @@
+name = "mini-call-log-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mini-call-log-db"
+database_id = "mini-call-log-db-id"
+migrations_dir = "migrations"
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:3000"
+
+# Secrets to be set via `npx wrangler secret put <KEY>`:
+# - INGEST_TOKEN
+# - GROQ_API_KEY

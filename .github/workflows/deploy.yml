@@ -1,0 +1,108 @@
+name: CI/CD Pipeline - Mini Call Log Service
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, Test & Eval Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci || npm install
+
+      - name: TypeScript Check (Frontend & Worker)
+        run: npm run lint
+
+      - name: Run Worker Unit Tests
+        run: npm run test:worker
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r bot/requirements.txt
+          pip install pytest httpx
+
+      - name: Run Bot Unit Tests
+        run: pytest bot/tests/
+
+      - name: Run Offline Regression Eval Gate
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python evals/run_evals.py --gate
+
+  deploy:
+    name: Deploy to Cloudflare (D1, Worker, Pages)
+    needs: checks
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci || npm install
+
+      # Step 1: Apply D1 database migrations
+      - name: Apply D1 Migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply mini-call-log-db --remote
+          workingDirectory: worker
+
+      # Step 2: Deploy Cloudflare Worker API
+      - name: Deploy Worker API
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          workingDirectory: worker
+
+      # Step 3: Build frontend and deploy to Cloudflare Pages
+      - name: Build Frontend
+        env:
+          VITE_API_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+          VITE_BOT_URL: ${{ secrets.VITE_BOT_URL || 'http://localhost:8765' }}
+        run: npm run build
+
+      - name: Deploy Frontend to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name mini-call-log-web

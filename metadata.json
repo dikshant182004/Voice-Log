@@ -1,0 +1,6 @@
+{
+  "name": "Mini Call Log Service",
+  "description": "Voice AI call logging service with streaming STT, LLM, TTS latency telemetry, D1 persistence, and automated call evaluations.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
