@@ -128,4 +128,17 @@ export const apiClient = {
     const safeDays = Math.max(1, Math.min(days, 90));
     return requestJson<CallStatsResponse>(`/stats?days=${safeDays}`, { method: 'GET', signal });
   },
+
+  async ingestCall(payload: any, signal?: AbortSignal): Promise<{ status: string; call_id: string; duplicate?: boolean }> {
+    const token = 'secret_ingest_token_12345';
+    return requestJson<{ status: string; call_id: string; duplicate?: boolean }>(`/calls`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
 };

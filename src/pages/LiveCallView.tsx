@@ -1,5 +1,5 @@
-import React from 'react';
-import { Phone, PhoneOff, Mic, MicOff, AlertCircle, Info } from 'lucide-react';
+import React, { useState } from 'react';
+import { Phone, PhoneOff, Mic, MicOff, AlertCircle, Info, Volume2, Send, Zap } from 'lucide-react';
 import { useVoiceCall } from '../hooks/useVoiceCall';
 import { AudioVisualizer } from '../components/AudioVisualizer';
 
@@ -13,12 +13,18 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
     callId,
     durationSeconds,
     isMuted,
+    isAssistantSpeaking,
+    transcript,
+    latestMetrics,
     errorMessage,
     analyser,
     startCall,
     endCall,
     toggleMute,
+    sendTurnText,
   } = useVoiceCall(onCallFinished);
+
+  const [inputTurn, setInputTurn] = useState('');
 
   const formatTimer = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -29,12 +35,25 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
   const isLive = callState === 'live' || callState === 'connecting' || callState === 'requesting_mic';
   const botUrl = import.meta.env.VITE_BOT_URL || 'http://127.0.0.1:8765';
 
+  const handleSendInput = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputTurn.trim()) return;
+    sendTurnText(inputTurn.trim());
+    setInputTurn('');
+  };
+
+  const quickPrompts = [
+    'What are your customer support hours?',
+    'What is your return and refund policy?',
+    'Do you support international shipping?',
+  ];
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="text-center space-y-1 pb-4 border-b border-neutral-200">
         <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Voice AI Call Session</h1>
         <p className="text-sm text-neutral-500 max-w-lg mx-auto">
-          Talk to the local Pipecat agent via browser WebRTC. Use headphones to prevent acoustic echo.
+          Talk to your voice AI assistant. Speak into your microphone or send queries in real time.
         </p>
       </div>
 
@@ -66,7 +85,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
             <span
               className={`w-2 h-2 rounded-full ${
                 callState === 'live'
-                  ? 'bg-emerald-500 animate-pulse'
+                  ? isAssistantSpeaking ? 'bg-indigo-500 animate-bounce' : 'bg-emerald-500 animate-pulse'
                   : callState === 'connecting' || callState === 'requesting_mic'
                   ? 'bg-amber-500 animate-ping'
                   : callState === 'reported'
@@ -74,7 +93,9 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
                   : 'bg-neutral-400'
               }`}
             />
-            <span className="capitalize">{callState.replace('_', ' ')}</span>
+            <span className="capitalize">
+              {callState === 'live' && isAssistantSpeaking ? 'Assistant Speaking...' : callState.replace('_', ' ')}
+            </span>
           </div>
 
           <div className="text-4xl font-bold font-mono tabular-nums text-neutral-900">
@@ -88,6 +109,25 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
 
         {/* Real-time Microphone Waveform */}
         <AudioVisualizer analyser={analyser} isActive={callState === 'live' && !isMuted} />
+
+        {/* Real-time Turn Telemetry Pill */}
+        {latestMetrics ? (
+          <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-xl flex items-center justify-around text-xs font-mono text-neutral-600">
+            <div className="flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-amber-500" />
+              <span>STT: <strong className="text-neutral-900">{latestMetrics.stt_ms}ms</strong></span>
+            </div>
+            <div>
+              LLM TTFB: <strong className="text-neutral-900">{latestMetrics.llm_ttfb_ms}ms</strong>
+            </div>
+            <div>
+              TTS TTFB: <strong className="text-neutral-900">{latestMetrics.tts_ttfb_ms}ms</strong>
+            </div>
+            <div className="text-indigo-600 font-semibold">
+              V2V: {latestMetrics.voice_to_voice_ms}ms
+            </div>
+          </div>
+        ) : null}
 
         {/* Action Controls */}
         <div className="flex items-center justify-center gap-4 pt-2">
@@ -124,9 +164,82 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
           )}
         </div>
 
+        {/* Live Conversation Transcript */}
+        {callState === 'live' && (
+          <div className="pt-4 border-t border-neutral-100 text-left space-y-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">Live Transcript</h3>
+            <div className="max-h-56 overflow-y-auto space-y-2.5 pr-1 text-xs">
+              {transcript.length === 0 ? (
+                <p className="text-neutral-400 italic text-center py-4">
+                  Speak into your microphone or click a prompt below to begin talking...
+                </p>
+              ) : (
+                transcript.map((t, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-xl flex items-start gap-2.5 ${
+                      t.role === 'user'
+                        ? 'bg-neutral-100 ml-8 text-neutral-900'
+                        : 'bg-indigo-50/70 border border-indigo-100 mr-8 text-indigo-950'
+                    }`}
+                  >
+                    {t.role === 'assistant' ? (
+                      <Volume2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <Mic className="w-4 h-4 text-neutral-500 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <div className="font-semibold capitalize text-[10px] text-neutral-500 mb-0.5">
+                        {t.role}
+                      </div>
+                      <p className="text-xs leading-relaxed">{t.text}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Quick Test Chips */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[10px] font-medium text-neutral-400">Quick Test Prompts:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {quickPrompts.map((q, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => sendTurnText(q)}
+                    className="px-2.5 py-1 text-xs bg-neutral-100 hover:bg-neutral-200 text-neutral-700 rounded-lg transition-colors"
+                  >
+                    "{q}"
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Text Input Option for Quiet Environments */}
+            <form onSubmit={handleSendInput} className="flex gap-2 pt-2">
+              <input
+                type="text"
+                value={inputTurn}
+                onChange={(e) => setInputTurn(e.target.value)}
+                placeholder="Or type a question to test conversational turn..."
+                className="flex-1 px-3 py-2 text-xs bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-neutral-900"
+              />
+              <button
+                type="submit"
+                disabled={!inputTurn.trim()}
+                className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white text-xs font-medium rounded-xl flex items-center gap-1.5 transition-colors"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send</span>
+              </button>
+            </form>
+          </div>
+        )}
+
         {callState === 'reported' ? (
           <div className="p-3 bg-neutral-50 border border-neutral-200 rounded-lg text-xs text-neutral-600">
-            Session ended. Ingestion payload dispatched to Cloudflare Worker.
+            Session ended. Ingestion payload dispatched to Cloudflare Worker. Loading call details...
           </div>
         ) : null}
       </div>
