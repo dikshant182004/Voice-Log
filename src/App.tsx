@@ -69,7 +69,7 @@ export function App() {
           <div className="flex items-center gap-4">
             <span className="font-mono">p50 Target &lt; 800ms</span>
             <span aria-hidden="true">·</span>
-            <span>Deepgram Nova-3 + Groq Llama 3.3 + Cartesia Sonic</span>
+            <span>Deepgram Nova-3 General + Groq gpt-oss-20b + Cartesia Sonic 3.6</span>
           </div>
         </div>
       </footer>

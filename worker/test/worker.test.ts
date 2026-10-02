@@ -163,9 +163,9 @@ const SAMPLE_CALL_PAYLOAD = {
   status: 'completed',
   end_reason: 'user_hangup',
   config: {
-    stt: 'deepgram:nova-3',
-    llm: 'groq:llama-3.3-70b-versatile',
-    tts: 'cartesia:sonic',
+    stt: 'deepgram:nova-3-general',
+    llm: 'groq:openai/gpt-oss-20b',
+    tts: 'cartesia:sonic-3.6',
     persona: 'default',
   },
   transcript: [

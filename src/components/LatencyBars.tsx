@@ -11,9 +11,9 @@ interface LatencyBarsProps {
 export const LatencyBars: React.FC<LatencyBarsProps> = ({ stt, llm, tts, v2v }) => {
   const steps = [
     { label: 'Voice-to-Voice (E2E)', stat: v2v, color: 'bg-emerald-600', text: 'text-emerald-700' },
-    { label: 'Deepgram STT (Nova-3)', stat: stt, color: 'bg-sky-600', text: 'text-sky-700' },
-    { label: 'Groq LLM TTFB (Llama 3.3)', stat: llm, color: 'bg-amber-600', text: 'text-amber-700' },
-    { label: 'Cartesia TTS TTFB (Sonic)', stat: tts, color: 'bg-indigo-600', text: 'text-indigo-700' },
+    { label: 'Deepgram STT (Nova-3 General)', stat: stt, color: 'bg-sky-600', text: 'text-sky-700' },
+    { label: 'Groq LLM TTFB (gpt-oss-20b)', stat: llm, color: 'bg-amber-600', text: 'text-amber-700' },
+    { label: 'Cartesia TTS TTFB (Sonic 3.6)', stat: tts, color: 'bg-indigo-600', text: 'text-indigo-700' },
   ];
 
   const maxMs = Math.max(v2v.p95_ms || 1000, 1000);

@@ -61,9 +61,9 @@ class TurnMetricModel(BaseModel):
 
 
 class CallConfigModel(BaseModel):
-  stt: str = "deepgram:nova-3"
-  llm: str = "groq:llama-3.3-70b-versatile"
-  tts: str = "cartesia:sonic"
+  stt: str = "deepgram:nova-3-general"
+  llm: str = "groq:openai/gpt-oss-20b"
+  tts: str = "cartesia:sonic-3.6"
   persona: str = "default"
 
 

@@ -78,7 +78,7 @@ Produce a JSON object matching this exact schema:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
+          model: 'openai/gpt-oss-120b',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -108,7 +108,7 @@ Produce a JSON object matching this exact schema:
         sentiment: validated.sentiment,
         scores: validated.scores,
         flags: validated.flags,
-        judge_model: 'groq:llama-3.1-8b-instant',
+        judge_model: 'groq:openai/gpt-oss-120b',
         created_at: new Date().toISOString(),
       };
     } catch (err: any) {

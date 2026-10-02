@@ -52,14 +52,26 @@ def create_pipeline(
     params=VADParams(stop_secs=settings.vad_stop_secs),
   )
 
-  # 2. Deepgram Streaming STT with endpointing
-  stt = DeepgramSTTService(
-    api_key=settings.deepgram_api_key,
-    model=settings.stt_model,
-    language="en",
-    endpointing=settings.endpointing_ms,
-    interim_results=True,
-  )
+  # 2. Deepgram Streaming STT with endpointing (Pipecat 1.x Settings)
+  stt_settings = getattr(DeepgramSTTService, "Settings", None)
+  if stt_settings:
+    stt = DeepgramSTTService(
+      api_key=settings.deepgram_api_key,
+      settings=stt_settings(
+        model=settings.stt_model,
+        language="en",
+        endpointing=settings.endpointing_ms,
+        interim_results=True,
+      ),
+    )
+  else:
+    stt = DeepgramSTTService(
+      api_key=settings.deepgram_api_key,
+      model=settings.stt_model,
+      language="en",
+      endpointing=settings.endpointing_ms,
+      interim_results=True,
+    )
 
   # 3. LLM Context with voice system prompt
   context = OpenAILLMContext([
@@ -67,26 +79,57 @@ def create_pipeline(
   ])
   context_aggregator = context.create_aggregator()
 
-  # 4. Groq Streaming LLM
-  llm = GroqLLMService(
-    api_key=settings.groq_api_key,
-    model=settings.llm_model,
-    max_tokens=150,
-    temperature=0.2,
-  )
+  # 4. Groq Streaming LLM (Pipecat 1.x Settings)
+  llm_settings = getattr(GroqLLMService, "Settings", None)
+  if llm_settings:
+    llm = GroqLLMService(
+      api_key=settings.groq_api_key,
+      settings=llm_settings(
+        model=settings.llm_model,
+        max_tokens=150,
+        temperature=0.2,
+      ),
+    )
+  else:
+    llm = GroqLLMService(
+      api_key=settings.groq_api_key,
+      model=settings.llm_model,
+      max_tokens=150,
+      temperature=0.2,
+    )
 
-  # 5. Primary TTS (Cartesia Sonic) with optional ElevenLabs runtime fallback
+  # 5. Primary TTS (Cartesia Sonic 3.6 via Pipecat 1.x Settings) with optional ElevenLabs runtime fallback
   if settings.tts_provider == "cartesia" and settings.cartesia_api_key:
-    tts = CartesiaTTSService(
-      api_key=settings.cartesia_api_key,
-      voice_id=settings.tts_voice_id,
-      sample_rate=settings.tts_sample_rate,
-    )
+    tts_settings = getattr(CartesiaTTSService, "Settings", None)
+    if tts_settings:
+      tts = CartesiaTTSService(
+        api_key=settings.cartesia_api_key,
+        settings=tts_settings(
+          voice=settings.tts_voice_id,
+          model=settings.tts_model,
+          sample_rate=settings.tts_sample_rate,
+        ),
+      )
+    else:
+      tts = CartesiaTTSService(
+        api_key=settings.cartesia_api_key,
+        voice_id=settings.tts_voice_id,
+        sample_rate=settings.tts_sample_rate,
+      )
   elif settings.elevenlabs_api_key:
-    tts = ElevenLabsTTSService(
-      api_key=settings.elevenlabs_api_key,
-      voice_id="21m00Tcm4TlvDq8ikWAM",
-    )
+    eleven_settings = getattr(ElevenLabsTTSService, "Settings", None)
+    if eleven_settings:
+      tts = ElevenLabsTTSService(
+        api_key=settings.elevenlabs_api_key,
+        settings=eleven_settings(
+          voice="21m00Tcm4TlvDq8ikWAM",
+        ),
+      )
+    else:
+      tts = ElevenLabsTTSService(
+        api_key=settings.elevenlabs_api_key,
+        voice_id="21m00Tcm4TlvDq8ikWAM",
+      )
   else:
     raise ValueError(f"No valid API key found for TTS provider: {settings.tts_provider}")
 

@@ -24,7 +24,7 @@ export const DevConsolePage: React.FC = () => {
     "duration_ms": 90000,
     "status": "completed",
     "end_reason": "user_hangup",
-    "config": { "stt": "deepgram:nova-3", "llm": "groq:llama-3.3-70b-versatile", "tts": "cartesia:sonic", "persona": "default" },
+    "config": { "stt": "deepgram:nova-3-general", "llm": "groq:openai/gpt-oss-20b", "tts": "cartesia:sonic-3.6", "persona": "default" },
     "transcript": [
       { "turn_index": 0, "role": "user", "text": "What is the return window?", "ts_ms": 1100, "interrupted": false },
       { "turn_index": 1, "role": "assistant", "text": "You can return items within 30 days.", "ts_ms": 1780, "interrupted": false }

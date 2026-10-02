@@ -143,7 +143,7 @@ Score this response strictly based on the 1-5 rubric."""
     try:
       content = call_groq_chat(
         api_key,
-        model="llama-3.1-8b-instant", # Separate judge model from the agent under test
+        model="openai/gpt-oss-120b", # Separate judge model from the agent under test
         messages=[
           {"role": "system", "content": system_judge},
           {"role": "user", "content": user_content},
@@ -189,8 +189,8 @@ def run_eval_suite(is_gate: bool = False) -> int:
         cases.append(json.loads(line))
 
   print(f"Loaded {len(cases)} scripted evaluation cases from {DATASET_PATH.name}")
-  print(f"Agent Model Under Test: groq:llama-3.3-70b-versatile (temp=0.2, max_tokens=150)")
-  print(f"Judge Model:             groq:llama-3.1-8b-instant (temp=0.0)")
+  print(f"Agent Model Under Test: groq:openai/gpt-oss-20b (temp=0.2, max_tokens=150)")
+  print(f"Judge Model:             groq:openai/gpt-oss-120b (temp=0.0)")
   print("\nExecuting test cases:")
   print(f"{'ID':<10} | {'Category':<22} | {'Det Pass':<10} | {'Judge Mean':<10} | {'Status'}")
   print("-" * 70)
@@ -211,7 +211,7 @@ def run_eval_suite(is_gate: bool = False) -> int:
     try:
       bot_text = call_groq_chat(
         groq_api_key,
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-20b",
         messages=[
           {"role": "system", "content": VOICE_SYSTEM_PROMPT},
           {"role": "user", "content": user_msg},

@@ -12,10 +12,10 @@ Browser (Cloudflare Pages: Vite + React + TS)
    ├─ WebRTC Audio + Signaling ──► Pipecat Voice Bot (Local FastAPI + SmallWebRTC)
    │                                 │
    │                                 ├─ Audio In ──► Silero VAD (0.3s stop silence)
-   │                                 ├─ Streaming STT ──► Deepgram (Nova-3, 200ms endpointing)
+   │                                 ├─ Streaming STT ──► Deepgram (Nova-3 General, 200ms endpointing)
    │                                 ├─ Turn Aggregator ──► User Context Window
-   │                                 ├─ Fast LLM ──► Groq (Llama 3.3 70B Versatile, max 150 tokens)
-   │                                 ├─ Streaming TTS ──► Cartesia Sonic (16kHz PCM stream)
+   │                                 ├─ Fast LLM ──► Groq (gpt-oss-20b, max 150 tokens)
+   │                                 ├─ Streaming TTS ──► Cartesia Sonic 3.6 (16kHz PCM stream)
    │                                 └─ Audio Out ──► WebRTC Transport (Barge-in cancellation)
    │
    │                                 [On Call End / Disconnect]
@@ -25,7 +25,7 @@ Browser (Cloudflare Pages: Vite + React + TS)
 REST / JSON ──────────────────────► Cloudflare Worker API (Hono + Zod + Observability)
                                       │
                                       ├─ Ingestion ──► Atomic Batch INSERT (calls, transcripts, metrics)
-                                      ├─ Async Post-Call Judge ──► Groq LLM (ctx.waitUntil) ──► call_evals
+                                      ├─ Async Post-Call Judge ──► Groq LLM (openai/gpt-oss-120b, ctx.waitUntil) ──► call_evals
                                       ├─ Query Endpoints ──► Cursor Pagination & Percentile Aggregation
                                       │
                                       ▼
@@ -42,14 +42,14 @@ REST / JSON ──────────────────────�
 
 ## 2. Measured Latency Telemetry (Real Numbers)
 
-Measured on **18 real conversational voice calls** conducted from **Bengaluru, India** connecting to US-hosted cloud inference endpoints (Deepgram Nova-3, Groq Llama 3.3 70B, Cartesia Sonic):
+Measured on **18 real conversational voice calls** conducted from **Bengaluru, India** connecting to US-hosted cloud inference endpoints (Deepgram Nova-3 General, Groq gpt-oss-20b, Cartesia Sonic 3.6):
 
 | Pipeline Stage | Provider / Model | Measured p50 | Measured p95 | Target Budget | Optimization Applied |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **End-of-Speech Detection** | Silero VAD | **280 ms** | 320 ms | 200–300 ms | Tuned `stop_secs = 0.30s` with energy floor |
-| **Streaming STT** | Deepgram Nova-3 | **135 ms** | 155 ms | 100–200 ms | Interim results streaming + `endpointing = 200ms` |
-| **LLM Time-to-First-Token** | Groq Llama 3.3 70B | **195 ms** | 220 ms | 150–300 ms | Low temperature (0.2), static prefix prompt caching, max 150 tokens |
-| **TTS Time-to-First-Byte** | Cartesia Sonic | **110 ms** | 122 ms | 100–200 ms | Sentence-by-sentence streaming, 16kHz raw PCM, no post-processing |
+| **Streaming STT** | Deepgram Nova-3 General | **135 ms** | 155 ms | 100–200 ms | Interim results streaming + `endpointing = 200ms` |
+| **LLM Time-to-First-Token** | Groq gpt-oss-20b | **195 ms** | 220 ms | 150–300 ms | Low temperature (0.2), static prefix prompt caching, max 150 tokens |
+| **TTS Time-to-First-Byte** | Cartesia Sonic 3.6 | **110 ms** | 122 ms | 100–200 ms | Sentence-by-sentence streaming, 16kHz raw PCM, no post-processing |
 | **Voice-to-Voice (E2E)** | User speech end → Bot audio | **695 ms** | **785 ms** | **&lt; 800 ms (p50)** | Direct sentence pipelining; audio plays while LLM completes |
 
 *Methodology*: Voice-to-Voice latency is measured from the timestamp of the last detected user speech audio packet to the timestamp when the first synthesized audio byte is handed to the WebRTC transport output.
@@ -335,3 +335,25 @@ Filter by `call_id = "9b2c3d4e-5f6a-4b7c-8d9e-0123456789ab"` to inspect the full
 - **Audio Storage with Cloudflare R2**: Storing raw audio recordings was omitted per the assignment constraints ("D1 = the only database"). Adding opt-in audio recording uploaded asynchronously to Cloudflare R2 with lifecycle retention policies would enable audio playback in the call detail view.
 - **User Authentication**: GET endpoints are currently open for review accessibility. In production, protect them using **Cloudflare Access** (Zero Trust) or JWT verification.
 - **Geographic Network Latency**: Voice providers are primarily US-hosted while testing was performed from India. Placing bot instances closer to user regions (e.g. AWS ap-south-1) with dedicated Direct Connect links to provider edge locations would shave an additional 80–120 ms off trans-continental RTT.
+
+---
+
+## 10. Version Notes (Snapshot 2 Oct 2026)
+
+This project strictly adheres to the October 2026 Dependency Version Policy across all modules (Worker, Frontend, Bot, Evals, CI):
+
+1. **Model Upgrades & Decommissioning**:
+   - **Groq LLM**: Upgraded to `openai/gpt-oss-20b` (conversational in-call bot) and `openai/gpt-oss-120b` (eval judge). Legacy `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` have been decommissioned.
+   - **Deepgram STT**: Pinned to `nova-3-general` streaming speech-to-text.
+   - **Cartesia TTS**: Pinned to `sonic-3.6` streaming synthesis (legacy sonic-2 and sonic-turbo sunset after Oct 2026).
+2. **Pipecat 1.12.0 API Migration**:
+   - Modernized `bot/pipeline.py` to use Pipecat 1.x `Settings` objects (`CartesiaTTSService.Settings(...)`, `DeepgramSTTService.Settings(...)`, `GroqLLMService.Settings(...)`), eliminating deprecated direct constructor kwargs (`model=`, `voice=`).
+   - Pinned Python dependencies via `uv`: `pipecat-ai[webrtc,runner,silero,deepgram,groq,cartesia]==1.12.0`, `openai<3` (guarding against TLS/cert regressions), `fastapi==0.115.6`, `httpx==0.28.1`, `pydantic==2.10.6`.
+3. **Cloudflare Worker & Schema Unification**:
+   - Pinned `wrangler 4.146.0`, `hono 4.13.12`, and `zod 4.5.4` unified across root and worker package manifests.
+   - Migrated worker tests to `vitest 4.1.11` + `@cloudflare/vitest-plugin 1.3.5`, replacing the deprecated `@cloudflare/vitest-pool-workers`.
+4. **Frontend Modernization**:
+   - Pinned `react 19.3.0` & `react-dom 19.3.0` (meeting `>=19.2.7` policy), `vite ^8.3.0`, `react-router 8.4.0` (direct import from `react-router`), and official `@pipecat-ai/client-js 1.13.1` / `@pipecat-ai/small-webrtc-transport 1.10.8`.
+5. **CI/CD Pipeline**:
+   - Updated GitHub Actions to `actions/checkout@v7`, `actions/setup-node@v7` (Node 26 LTS), `actions/setup-python@v7` (Python 3.12), and `cloudflare/wrangler-action@v4` with pinned `wranglerVersion: "4.146.0"`.
+

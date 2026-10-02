@@ -264,7 +264,7 @@ export const callRepo: CallRepository = {
     const llmStats = calculatePercentiles(llmList);
     const ttsStats = calculatePercentiles(ttsList);
 
-    let parsedConfig = { stt: 'deepgram:nova-3', llm: 'groq:llama-3.3-70b-versatile', tts: 'cartesia:sonic', persona: 'default' };
+    let parsedConfig = { stt: 'deepgram:nova-3-general', llm: 'groq:openai/gpt-oss-20b', tts: 'cartesia:sonic-3.6', persona: 'default' };
     try {
       if (callRow.config_json) parsedConfig = JSON.parse(callRow.config_json);
     } catch {}

@@ -35,9 +35,10 @@ class BotSettings(BaseSettings):
   )
 
   # --- Provider & Model Identifiers ---
-  stt_model: str = Field(default="nova-3", description="Deepgram model name")
-  llm_model: str = Field(default="llama-3.3-70b-versatile", description="Groq model identifier")
+  stt_model: str = Field(default="nova-3-general", description="Deepgram streaming STT model identifier")
+  llm_model: str = Field(default="openai/gpt-oss-20b", description="Groq conversational LLM model identifier")
   tts_provider: str = Field(default="cartesia", description="Primary TTS provider: cartesia or elevenlabs")
+  tts_model: str = Field(default="sonic-3.6", description="Cartesia TTS model identifier")
   tts_voice_id: str = Field(
     default="79a125e8-cd45-4c13-8a67-188112f4dd22",
     description="Cartesia conversational voice ID"

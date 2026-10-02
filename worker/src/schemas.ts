@@ -6,9 +6,9 @@ import { z } from 'zod';
  */
 
 export const CallConfigSchema = z.object({
-  stt: z.string().default('deepgram:nova-3'),
-  llm: z.string().default('groq:llama-3.3-70b-versatile'),
-  tts: z.string().default('cartesia:sonic'),
+  stt: z.string().default('deepgram:nova-3-general'),
+  llm: z.string().default('groq:openai/gpt-oss-20b'),
+  tts: z.string().default('cartesia:sonic-3.6'),
   persona: z.string().default('default'),
 });
 
@@ -42,9 +42,9 @@ export const PostCallPayloadSchema = z.object({
   status: z.enum(['completed', 'disconnected', 'error']),
   end_reason: z.enum(['user_hangup', 'client_disconnect', 'error', 'timeout']).nullable().optional(),
   config: CallConfigSchema.default({
-    stt: 'deepgram:nova-3',
-    llm: 'groq:llama-3.3-70b-versatile',
-    tts: 'cartesia:sonic',
+    stt: 'deepgram:nova-3-general',
+    llm: 'groq:openai/gpt-oss-20b',
+    tts: 'cartesia:sonic-3.6',
     persona: 'default',
   }),
   transcript: z.array(TranscriptTurnSchema).max(500, { message: 'Max 500 turns allowed per call' }).default([]),
