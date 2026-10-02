@@ -19,9 +19,25 @@ import random
 import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, Set, List
-from pydantic import BaseModel, Field
 
-import httpx
+try:
+  from pydantic import BaseModel, Field
+except ImportError:
+  class BaseModel:
+    def __init__(self, **kwargs):
+      for k, v in kwargs.items():
+        setattr(self, k, v)
+    def model_dump(self):
+      return self.__dict__
+  def Field(*args, **kwargs):
+    if 'default_factory' in kwargs:
+      return kwargs['default_factory']()
+    return kwargs.get('default', None)
+
+try:
+  import httpx
+except ImportError:
+  httpx = None
 
 logger = logging.getLogger("bot.reporter")
 SPOOL_DIR = Path(__file__).resolve().parent / "spool"
@@ -71,7 +87,7 @@ class IngestCallPayloadModel(BaseModel):
 
 
 class CallReporter:
-  def __init__(self, worker_base_url: str, ingest_token: str, client: Optional[httpx.AsyncClient] = None):
+  def __init__(self, worker_base_url: str, ingest_token: str, client: Optional[Any] = None):
     self.worker_base_url = worker_base_url.rstrip("/")
     self.ingest_token = ingest_token
     self._client = client
@@ -81,7 +97,7 @@ class CallReporter:
     SPOOL_DIR.mkdir(parents=True, exist_ok=True)
     REJECTED_DIR.mkdir(parents=True, exist_ok=True)
 
-  def set_client(self, client: httpx.AsyncClient) -> None:
+  def set_client(self, client: Any) -> None:
     self._client = client
 
   async def finalize_call(self, call_id: str) -> bool:

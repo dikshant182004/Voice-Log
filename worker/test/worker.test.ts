@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import app from '../src/index';
+import { calculatePercentiles } from '../src/db';
+import { isValidUuid } from '../src/lib/ids';
 
 /**
  * In-memory Mock D1 Database implementation to run tests without network dependencies.
@@ -333,5 +335,56 @@ describe('Mini Call Log Service - Cloudflare Worker API', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
     expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+  });
+
+  it('POST /calls rejects oversized body with 413', async () => {
+    const res = await app.request(
+      '/calls',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${TEST_ENV.INGEST_TOKEN}`,
+          'Content-Length': '600000', // > 512KB
+        },
+        body: JSON.stringify(SAMPLE_CALL_PAYLOAD),
+      },
+      TEST_ENV
+    );
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as any;
+    expect(body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  it('CORS does not set allow header for disallowed external origin', async () => {
+    const res = await app.request(
+      '/calls',
+      {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://evil-unauthorized-site.com' },
+      },
+      { ...TEST_ENV, ALLOW_DEV_ORIGINS: 'false' }
+    );
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('calculatePercentiles computes accurate p50 and p95 on known values', () => {
+    const values = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000];
+    const stats = calculatePercentiles(values);
+    expect(stats.avg).toBe(550);
+    expect(stats.p50).toBe(500);
+    expect(stats.p95).toBe(1000);
+    expect(stats.sample_size).toBe(10);
+
+    const emptyStats = calculatePercentiles([]);
+    expect(emptyStats.avg).toBeNull();
+    expect(emptyStats.p50).toBeNull();
+    expect(emptyStats.sample_size).toBe(0);
+  });
+
+  it('isValidUuid accurately validates UUID formats', () => {
+    expect(isValidUuid('9b2c3d4e-5f6a-4b7c-8d9e-0123456789ab')).toBe(true);
+    expect(isValidUuid('not-a-uuid')).toBe(false);
+    expect(isValidUuid('')).toBe(false);
   });
 });
