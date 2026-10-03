@@ -108,7 +108,9 @@ class MetricsProcessor(FrameProcessor):
         ):
             self._collector.mark_user_speech_end()
 
-        if isinstance(frame, LLMFullResponseStartFrame):
+        if isinstance(frame, TranscriptionFrame):
+            self._collector.mark_stt_final()
+        elif isinstance(frame, LLMFullResponseStartFrame):
             self._collector.mark_llm_start()
         elif isinstance(frame, TextFrame) and self._collector._llm_start_ts is not None:
             self._collector.mark_llm_first_token()
