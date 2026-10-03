@@ -39,7 +39,7 @@ class BotSettings(BaseSettings):
 
     bot_host: str = Field(default="127.0.0.1")
     bot_port: int = Field(default=8765)
-    allowed_origins: str = Field(default="http://localhost:5173,http://127.0.0.1:5173")
+    allowed_origins: str = Field(default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173")
     enable_debug_endpoints: bool = Field(default=False)
 
     def get_allowed_origins_list(self) -> List[str]:
