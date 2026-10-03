@@ -30,8 +30,13 @@ def create_pipeline(
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.audio.vad.vad_analyzer import VADParams
     from pipecat.pipeline.pipeline import Pipeline
-    from pipecat.frames.frames import LLMContextFrame
-    from pipecat.processors.frame_processor import FrameProcessor
+    from pipecat.frames.frames import (
+        ErrorFrame,
+        LLMContextFrame,
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+    )
+    from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.pipeline.worker import PipelineParams, PipelineWorker
     from pipecat.processors.aggregators.llm_context import LLMContext
     from pipecat.processors.aggregators.llm_response_universal import (
@@ -71,11 +76,12 @@ def create_pipeline(
         retry_on_timeout=True,
         settings=GroqLLMService.Settings(
             model=settings.llm_model,
-            temperature=0.2,
+            # Groq recommends a moderate temperature range for GPT-OSS. Keep
+            # reasoning low for interactive voice latency and explicitly omit
+            # the reasoning field from the streamed assistant text.
+            temperature=0.6,
             max_completion_tokens=settings.llm_max_completion_tokens,
             reasoning_effort=settings.llm_reasoning_effort,
-            # GPT-OSS can reason internally; do not return its reasoning payload
-            # to downstream processors when a concise spoken answer is all we need.
             extra={"include_reasoning": False},
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
@@ -131,50 +137,52 @@ def create_pipeline(
         ),
     )
 
-    class ContextWindowProcessor(FrameProcessor):
-        """Keep the live voice context bounded to the newest exchanges."""
+    class LLMContextDiagnostics(FrameProcessor):
+        """Validate and trace the exact frame that should start LLM inference.
 
-        def __init__(self, max_messages: int):
-            super().__init__()
-            self._max_messages = max(2, max_messages)
+        This processor is deliberately a pass-through. It never mutates the
+        shared LLMContext, so it cannot consume or delay an inference frame.
+        """
 
-        async def process_frame(self, frame: Any, direction: Any):
+        async def process_frame(self, frame: Any, direction: FrameDirection):
+            await super().process_frame(frame, direction)
             if isinstance(frame, LLMContextFrame):
                 messages = frame.context.get_messages()
                 user_messages = [
-                    message.get("content", "")
-                    for message in messages
-                    if message.get("role") == "user"
+                    m.get("content", "")
+                    for m in messages
+                    if isinstance(m, dict) and m.get("role") == "user"
                 ]
                 last_user = str(user_messages[-1]).strip() if user_messages else ""
-                if not last_user:
-                    logger.warning(
-                        "LLM context frame has no user message; LLM inference will be skipped"
-                    )
-                else:
-                    logger.debug(
-                        "LLM context ready: messages=%d last_user=%r",
-                        len(messages),
-                        last_user[:160],
-                    )
-
-                if len(messages) > self._max_messages:
-                    # The voice prompt is supplied separately to the LLM, so
-                    # retain only the newest conversation messages here.
-                    frame.context.set_messages(messages[-self._max_messages:])
-                    logger.debug(
-                        "Trimmed LLM context from %d to %d messages",
-                        len(messages),
-                        self._max_messages,
-                    )
+                logger.info(
+                    "LLM context frame ready: messages=%d user=%r",
+                    len(messages),
+                    last_user[:160],
+                )
             await self.push_frame(frame, direction)
 
-    context_window = ContextWindowProcessor(settings.context_max_messages)
+    class LLMResponseDiagnostics(FrameProcessor):
+        """Make provider-side failures visible without altering frame flow."""
+
+        async def process_frame(self, frame: Any, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMFullResponseStartFrame):
+                logger.info("LLM response started")
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                logger.info("LLM response ended")
+            elif isinstance(frame, ErrorFrame):
+                logger.error(
+                    "LLM/provider error: %s",
+                    getattr(frame, "error", frame),
+                )
+            await self.push_frame(frame, direction)
 
     user_transcript = TranscriptProcessor(transcript_collector)
     stt_metrics = MetricsProcessor(metrics_collector)
     turn_metrics = MetricsProcessor(metrics_collector, observe_user_turn=True)
+    context_diagnostics = LLMContextDiagnostics()
     assistant_transcript = TranscriptProcessor(transcript_collector)
+    llm_diagnostics = LLMResponseDiagnostics()
     llm_metrics = MetricsProcessor(metrics_collector)
     output_metrics = MetricsProcessor(metrics_collector)
 
@@ -185,9 +193,10 @@ def create_pipeline(
             user_transcript,
             stt_metrics,
             user_aggregator,
-            context_window,
             turn_metrics,
+            context_diagnostics,
             llm,
+            llm_diagnostics,
             assistant_transcript,
             llm_metrics,
             tts,
