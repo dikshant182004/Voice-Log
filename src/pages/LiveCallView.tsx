@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Phone, PhoneOff, Mic, MicOff, AlertCircle, Info, Volume2, Send, Zap } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, AlertCircle, Info, Volume2, Send, Zap, Activity } from 'lucide-react';
 import { useVoiceCall } from '../hooks/useVoiceCall';
 import { AudioVisualizer } from '../components/AudioVisualizer';
 
@@ -15,6 +15,9 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
     isMuted,
     isAssistantSpeaking,
     transcript,
+    interimTranscript,
+    isSpeechRecognitionActive,
+    speechRecognitionError,
     latestMetrics,
     errorMessage,
     analyser,
@@ -62,7 +65,9 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         <Info className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
         <div>
           <span>Signaling target: <code className="font-mono text-neutral-800">{botUrl}</code>.</span>
-          <span className="block text-neutral-500 mt-0.5">Ensure the local bot is running via <code className="font-mono">python -m bot.bot</code> before starting a call.</span>
+          <span className="block text-neutral-500 mt-0.5">
+            If running locally, start the bot with <code className="font-mono">python3 -m bot.bot</code>. Even if offline, browser speech recognition and local conversational responses continue seamlessly.
+          </span>
         </div>
       </div>
 
@@ -71,7 +76,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <span className="font-semibold block">Call Connection Error</span>
+            <span className="font-semibold block">Call Connection Notice</span>
             <p>{errorMessage}</p>
           </div>
         </div>
@@ -109,6 +114,41 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
 
         {/* Real-time Microphone Waveform */}
         <AudioVisualizer analyser={analyser} isActive={callState === 'live' && !isMuted} />
+
+        {/* Live Speech-to-Text Status & Interim Transcription */}
+        {callState === 'live' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-center gap-2 text-xs text-neutral-500">
+              <Activity className={`w-3.5 h-3.5 ${isSpeechRecognitionActive && !isMuted ? 'text-emerald-500 animate-pulse' : 'text-neutral-400'}`} />
+              <span>
+                {isMuted
+                  ? 'Microphone muted'
+                  : isAssistantSpeaking
+                  ? 'Assistant speaking (mic speech paused to prevent echo)'
+                  : isSpeechRecognitionActive
+                  ? 'Speech-to-Text active & listening...'
+                  : 'Initializing speech recognition...'}
+              </span>
+            </div>
+
+            {/* Interim live speech preview */}
+            {interimTranscript && (
+              <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-900 animate-pulse text-left flex items-start gap-2">
+                <Mic className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 block">Hearing speech:</span>
+                  <span>"{interimTranscript}"</span>
+                </div>
+              </div>
+            )}
+
+            {speechRecognitionError && (
+              <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 text-left">
+                {speechRecognitionError} (You can also type your turn below).
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Real-time Turn Telemetry Pill */}
         {latestMetrics ? (

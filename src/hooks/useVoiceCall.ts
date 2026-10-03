@@ -24,6 +24,9 @@ export interface UseVoiceCallReturn {
   isMuted: boolean;
   isAssistantSpeaking: boolean;
   transcript: TurnData[];
+  interimTranscript: string;
+  isSpeechRecognitionActive: boolean;
+  speechRecognitionError: string | null;
   latestMetrics: TurnMetrics | null;
   errorMessage: string | null;
   analyser: AnalyserNode | null;
@@ -40,6 +43,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState<boolean>(false);
   const [transcript, setTranscript] = useState<TurnData[]>([]);
+  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [isSpeechRecognitionActive, setIsSpeechRecognitionActive] = useState<boolean>(false);
+  const [speechRecognitionError, setSpeechRecognitionError] = useState<string | null>(null);
   const [latestMetrics, setLatestMetrics] = useState<TurnMetrics | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
@@ -51,6 +57,11 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const startTimeRef = useRef<number>(0);
   const recognitionRef = useRef<any>(null);
   const currentAudioElementRef = useRef<HTMLAudioElement | null>(null);
+
+  // Stable refs to prevent closure stale state bugs during speech events
+  const isCallActiveRef = useRef<boolean>(false);
+  const isAssistantSpeakingRef = useRef<boolean>(false);
+  const isMutedRef = useRef<boolean>(false);
   const callIdRef = useRef<string | null>(null);
   const transcriptRef = useRef<TurnData[]>([]);
   const latestMetricsRef = useRef<TurnMetrics | null>(null);
@@ -72,6 +83,14 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     durationSecondsRef.current = durationSeconds;
   }, [durationSeconds]);
 
+  useEffect(() => {
+    isAssistantSpeakingRef.current = isAssistantSpeaking;
+  }, [isAssistantSpeaking]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
   // Audio Playback helper
   const playAssistantAudio = useCallback((audioBase64: string | null, fallbackText: string) => {
     if (audioBase64) {
@@ -83,18 +102,22 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
         const audio = new Audio(audioBase64);
         currentAudioElementRef.current = audio;
         setIsAssistantSpeaking(true);
+        isAssistantSpeakingRef.current = true;
 
         audio.onended = () => {
           setIsAssistantSpeaking(false);
+          isAssistantSpeakingRef.current = false;
           currentAudioElementRef.current = null;
         };
         audio.onerror = () => {
           setIsAssistantSpeaking(false);
+          isAssistantSpeakingRef.current = false;
           currentAudioElementRef.current = null;
         };
         audio.play().catch((err) => {
           console.warn('Audio playback notice:', err);
           setIsAssistantSpeaking(false);
+          isAssistantSpeakingRef.current = false;
         });
         return;
       } catch (e) {
@@ -110,12 +133,20 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
         utterance.rate = 1.05;
         utterance.pitch = 1.0;
         setIsAssistantSpeaking(true);
-        utterance.onend = () => setIsAssistantSpeaking(false);
-        utterance.onerror = () => setIsAssistantSpeaking(false);
+        isAssistantSpeakingRef.current = true;
+        utterance.onend = () => {
+          setIsAssistantSpeaking(false);
+          isAssistantSpeakingRef.current = false;
+        };
+        utterance.onerror = () => {
+          setIsAssistantSpeaking(false);
+          isAssistantSpeakingRef.current = false;
+        };
         window.speechSynthesis.speak(utterance);
       } catch (synthErr) {
         console.warn('SpeechSynthesis error:', synthErr);
         setIsAssistantSpeaking(false);
+        isAssistantSpeakingRef.current = false;
       }
     }
   }, []);
@@ -127,6 +158,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
 
     const userTurn: TurnData = { role: 'user', text: text.trim(), ts_ms: Date.now() };
     setTranscript((prev) => [...prev, userTurn]);
+    setInterimTranscript('');
 
     const botUrl = import.meta.env.VITE_BOT_URL || 'http://127.0.0.1:8765';
     try {
@@ -165,60 +197,131 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       `Yes, we offer express international shipping on all standard orders with full tracking.`
     ];
     const reply = fallbackReplies[Math.floor(Math.random() * fallbackReplies.length)];
-    const fallbackTurn: TurnData = { role: 'assistant', text: reply, ts_ms: Date.now() };
-    setTranscript((prev) => [...prev, fallbackTurn]);
+    const assistantTurn: TurnData = { role: 'assistant', text: reply, ts_ms: Date.now() };
+    setTranscript((prev) => [...prev, assistantTurn]);
     setLatestMetrics({ stt_ms: 115, llm_ttfb_ms: 175, tts_ttfb_ms: 105, voice_to_voice_ms: 615 });
     playAssistantAudio(null, reply);
-
   }, [playAssistantAudio]);
 
-  // Setup Browser Speech Recognition
+  // Robust Browser Speech Recognition with interim streaming & auto-recovery
   const startSpeechRecognition = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       console.info('Native browser speech recognition not available in this browser; text turn input enabled.');
+      setSpeechRecognitionError('Browser speech recognition not supported in this environment; text input available.');
       return;
     }
 
     try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
+
       const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = false;
+      // Using non-continuous mode avoids Chrome WebSocket timeout disconnects ('network' errors)
+      // and is automatically re-armed in onend for seamless conversational speech.
+      recognition.continuous = false;
+      recognition.interimResults = true;
       recognition.lang = 'en-US';
 
+      let silenceTimer: any = null;
+      let pendingInterim = '';
+
+      recognition.onstart = () => {
+        setIsSpeechRecognitionActive(true);
+        setSpeechRecognitionError(null);
+      };
+
       recognition.onresult = (event: any) => {
-        const lastResultIndex = event.results.length - 1;
-        const transcriptText = event.results[lastResultIndex][0]?.transcript?.trim();
-        if (transcriptText) {
-          sendTurnText(transcriptText);
+        let interim = '';
+        let finalFound = false;
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          const transcriptChunk = result[0]?.transcript || '';
+
+          if (result.isFinal) {
+            finalFound = true;
+            const finalSpeech = transcriptChunk.trim();
+            if (silenceTimer) clearTimeout(silenceTimer);
+            pendingInterim = '';
+            setInterimTranscript('');
+            if (finalSpeech && !isAssistantSpeakingRef.current) {
+              sendTurnText(finalSpeech);
+            }
+          } else {
+            interim += transcriptChunk;
+          }
+        }
+
+        if (!finalFound && interim && !isAssistantSpeakingRef.current) {
+          setInterimTranscript(interim);
+          pendingInterim = interim.trim();
+
+          // Silence fallback: If speaker pauses for 1200ms without isFinal, auto-commit
+          if (silenceTimer) clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            if (pendingInterim && isCallActiveRef.current && !isAssistantSpeakingRef.current) {
+              const textToSend = pendingInterim;
+              pendingInterim = '';
+              setInterimTranscript('');
+              sendTurnText(textToSend);
+            }
+          }, 1200);
         }
       };
 
       recognition.onerror = (e: any) => {
-        // network or no-speech are non-fatal warnings
-        if (e.error !== 'no-speech' && e.error !== 'network') {
-          console.warn('Speech recognition warning:', e.error);
+        if (e.error === 'not-allowed') {
+          setSpeechRecognitionError('Microphone permission denied for speech recognition.');
+        } else if (e.error === 'network') {
+          console.warn('Speech recognition network timeout. Auto-reconnecting...');
+          setSpeechRecognitionError('Reconnecting speech recognizer...');
+        } else if (e.error !== 'no-speech') {
+          console.warn('Speech recognition notice:', e.error);
         }
       };
 
       recognition.onend = () => {
-        if (callIdRef.current && callState === 'live') {
-          try {
-            recognition.start();
-          } catch (_) {}
+        setIsSpeechRecognitionActive(false);
+        if (silenceTimer) clearTimeout(silenceTimer);
+
+        // Commit any lingering interim speech before restarting
+        if (pendingInterim && isCallActiveRef.current && !isAssistantSpeakingRef.current) {
+          const lingering = pendingInterim;
+          pendingInterim = '';
+          setInterimTranscript('');
+          sendTurnText(lingering);
+        }
+
+        // Auto-restart loop with debounce for next utterance
+        if (isCallActiveRef.current && !isMutedRef.current) {
+          setTimeout(() => {
+            if (isCallActiveRef.current && !isMutedRef.current) {
+              try {
+                recognition.start();
+                setIsSpeechRecognitionActive(true);
+                setSpeechRecognitionError(null);
+              } catch (_) {
+                // Already started or active
+              }
+            }
+          }, 200);
         }
       };
 
       recognition.start();
       recognitionRef.current = recognition;
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Could not initialize SpeechRecognition:', e);
+      setSpeechRecognitionError(e.message || 'Speech recognition initialization failed.');
     }
-  }, [callState, sendTurnText]);
+  }, [sendTurnText]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      isCallActiveRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (_) {}
@@ -245,16 +348,29 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     if (streamRef.current) {
       const audioTrack = streamRef.current.getAudioTracks()[0];
       if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMuted(!audioTrack.enabled);
+        const nextState = !audioTrack.enabled;
+        audioTrack.enabled = nextState;
+        setIsMuted(!nextState);
+        isMutedRef.current = !nextState;
+
+        if (!nextState && recognitionRef.current) {
+          try { recognitionRef.current.stop(); } catch (_) {}
+        } else if (nextState && isCallActiveRef.current && recognitionRef.current) {
+          try { recognitionRef.current.start(); } catch (_) {}
+        }
       }
     }
   }, []);
 
   const endCall = useCallback(async () => {
-    if (callState === 'idle' || callState === 'ending' || callState === 'reported') return;
+    if (!isCallActiveRef.current && (callState === 'idle' || callState === 'ending' || callState === 'reported')) {
+      return;
+    }
 
+    isCallActiveRef.current = false;
     setCallState('ending');
+    setInterimTranscript('');
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -289,7 +405,8 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     }
     setAnalyser(null);
 
-    const finishedCallId = callId;
+    const finishedCallId = callIdRef.current || callId;
+
     if (finishedCallId) {
       const botUrl = import.meta.env.VITE_BOT_URL || 'http://127.0.0.1:8765';
       let reportedSuccessfully = false;
@@ -298,15 +415,19 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       try {
         const hRes = await fetch(`${botUrl}/hangup/${finishedCallId}`, { method: 'POST' });
         if (hRes.ok) {
-          reportedSuccessfully = true;
-          // Buffer for D1 transaction commit
-          await new Promise((resolve) => setTimeout(resolve, 600));
+          const body = await hRes.json().catch(() => null);
+          if (body?.persisted === true) {
+            reportedSuccessfully = true;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          } else {
+            console.info('Bot spooled call offline; triggering direct Cloudflare D1 ingestion fallback...');
+          }
         }
       } catch (err) {
-        console.warn('Bot hangup endpoint error:', err);
+        console.warn('Bot hangup endpoint error (bot server likely offline):', err);
       }
 
-      // 2. Direct Ingestion Fallback (Ensures D1 always has the call)
+      // 2. Direct Ingestion Fallback (Ensures Cloudflare D1 & local cache always receive the call)
       if (!reportedSuccessfully) {
         try {
           const turns = transcriptRef.current.length > 0
@@ -319,7 +440,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
               }))
             : [
                 { turn_index: 0, role: 'user', text: 'Hello, testing voice call session.', ts_ms: 1000, interrupted: false },
-                { turn_index: 1, role: 'assistant', text: 'Hello! I can hear you clearly. How can I assist you today?', ts_ms: 1650, interrupted: false }
+                { turn_index: 1, role: 'assistant', text: 'Hello! I can hear you clearly. How can I assist you today?', ts_ms: 1650, interrupted: false },
               ];
 
           const metrics = turns.length > 1
@@ -330,13 +451,14 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
                   llm_ttfb_ms: latestMetricsRef.current?.llm_ttfb_ms || 180,
                   tts_ttfb_ms: latestMetricsRef.current?.tts_ttfb_ms || 110,
                   voice_to_voice_ms: latestMetricsRef.current?.voice_to_voice_ms || 650,
-                }
+                },
               ]
             : [];
 
           const nowIso = new Date().toISOString();
           const startedIso = new Date(startTimeRef.current || Date.now() - 5000).toISOString();
 
+          // Ingest to Cloudflare Worker (also saves to local cache automatically)
           await apiClient.ingestCall({
             call_id: finishedCallId,
             started_at: startedIso,
@@ -361,7 +483,8 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           reportedSuccessfully = true;
           await new Promise((resolve) => setTimeout(resolve, 300));
         } catch (clientIngestErr) {
-          console.warn('Client direct ingestion fallback error:', clientIngestErr);
+          // Record is safely stored in local cache by apiClient.ingestCall before failing
+          console.warn('Direct Cloudflare ingestion error (saved to local fallback store):', clientIngestErr);
         }
       }
     }
@@ -376,9 +499,11 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const startCall = useCallback(async () => {
     try {
       setErrorMessage(null);
+      setSpeechRecognitionError(null);
       setCallState('requesting_mic');
       setDurationSeconds(0);
       setTranscript([]);
+      setInterimTranscript('');
       setLatestMetrics(null);
 
       const botUrl = import.meta.env.VITE_BOT_URL || 'http://127.0.0.1:8765';
@@ -451,6 +576,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
 
       setCallId(negotiatedCallId);
       callIdRef.current = negotiatedCallId;
+      isCallActiveRef.current = true;
 
       // Transition to live state
       setCallState('live');
@@ -465,6 +591,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
 
     } catch (err: any) {
       console.error('Call initialization failure:', err);
+      isCallActiveRef.current = false;
       setCallState('error');
 
       if (streamRef.current) {
@@ -496,6 +623,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     isMuted,
     isAssistantSpeaking,
     transcript,
+    interimTranscript,
+    isSpeechRecognitionActive,
+    speechRecognitionError,
     latestMetrics,
     errorMessage,
     analyser,

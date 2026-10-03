@@ -75,8 +75,9 @@ class MockD1Database {
             scores_json: this._bindings[1],
             summary: this._bindings[2],
             sentiment: this._bindings[3],
-            judge_model: this._bindings[4],
-            created_at: this._bindings[5],
+            flags_json: this._bindings[4],
+            judge_model: this._bindings[5],
+            created_at: this._bindings[6],
           });
           return { success: true, changes: 1 };
         }

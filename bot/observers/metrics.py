@@ -97,6 +97,25 @@ class MetricsCollector:
 
     return record
 
+  def add_turn_metric(
+    self,
+    turn_index: int,
+    stt_ms: Optional[int] = None,
+    llm_ttfb_ms: Optional[int] = None,
+    tts_ttfb_ms: Optional[int] = None,
+    voice_to_voice_ms: Optional[int] = None,
+  ) -> Dict[str, Any]:
+    """Records an explicitly supplied turn metric directly."""
+    record = {
+      "turn_index": turn_index,
+      "stt_ms": stt_ms,
+      "llm_ttfb_ms": llm_ttfb_ms,
+      "tts_ttfb_ms": tts_ttfb_ms,
+      "voice_to_voice_ms": voice_to_voice_ms,
+    }
+    self.turn_metrics.append(record)
+    return record
+
   def get_metrics(self) -> List[Dict[str, Any]]:
     return list(self.turn_metrics)
 

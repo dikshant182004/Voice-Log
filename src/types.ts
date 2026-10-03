@@ -41,6 +41,7 @@ export interface CallListItem {
   interruption_count?: number;
   p50_voice_to_voice_ms?: number | null;
   summary?: string | null;
+  isLocalPendingSync?: boolean;
 }
 
 export interface CallsListResponse {
@@ -93,6 +94,8 @@ export interface CallDetail {
   p95_v2v_ms?: number | null;
   usage: Usage;
   created_at: string;
+  isLocalPendingSync?: boolean;
+  syncError?: string | null;
 }
 
 export interface CallDetailResponse {

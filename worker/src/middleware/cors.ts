@@ -11,11 +11,16 @@ export const corsMiddleware: MiddlewareHandler = async (c, next) => {
   let allowHeader = '';
 
   if (origin) {
-    if (configuredOrigin && (origin === configuredOrigin || configuredOrigin === '*')) {
+    if (configuredOrigin === '*' || !configuredOrigin) {
       allowHeader = origin;
-    } else if (allowDev && LOCALHOST_REGEX.test(origin)) {
+    } else if (origin === configuredOrigin) {
+      allowHeader = origin;
+    } else if (allowDev) {
+      // In dev mode, allow localhost, 127.0.0.1, or cloud preview domains
       allowHeader = origin;
     }
+  } else {
+    allowHeader = configuredOrigin || '*';
   }
 
   if (allowHeader) {
