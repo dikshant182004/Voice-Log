@@ -68,7 +68,7 @@ def create_pipeline(
             model=settings.llm_model,
             temperature=0.2,
             max_tokens=settings.llm_max_completion_tokens,
-            extra={"reasoning_effort": settings.llm_reasoning_effort},
+            reasoning_effort=settings.llm_reasoning_effort,
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
     )
