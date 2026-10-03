@@ -77,12 +77,15 @@ def create_pipeline(
         settings=GroqLLMService.Settings(
             model=settings.llm_model,
             # Groq recommends a moderate temperature range for GPT-OSS. Keep
-            # reasoning low for interactive voice latency and explicitly omit
-            # the reasoning field from the streamed assistant text.
+            # Keep reasoning low for interactive voice latency. Pipecat 1.12.0
+            # passes Settings.extra directly to OpenAI AsyncCompletions.create(),
+            # so include_reasoning cannot be placed there: the OpenAI SDK rejects
+            # it as an unexpected Python keyword argument before the request is
+            # sent to Groq. GPT-OSS reasoning is therefore left at Groq default
+            # response handling; Pipecat consumes the normal assistant content.
             temperature=0.6,
             max_completion_tokens=settings.llm_max_completion_tokens,
             reasoning_effort=settings.llm_reasoning_effort,
-            extra={"include_reasoning": False},
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
     )
