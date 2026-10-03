@@ -27,6 +27,8 @@ def create_pipeline(
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.audio.vad.vad_analyzer import VADParams
     from pipecat.pipeline.pipeline import Pipeline
+    from pipecat.frames.frames import LLMContextFrame
+    from pipecat.processors.frame_processor import FrameProcessor
     from pipecat.pipeline.worker import PipelineParams, PipelineWorker
     from pipecat.processors.aggregators.llm_context import LLMContext
     from pipecat.processors.aggregators.llm_response_universal import (
@@ -66,7 +68,7 @@ def create_pipeline(
             model=settings.llm_model,
             temperature=0.2,
             max_tokens=settings.llm_max_completion_tokens,
-            reasoning_effort=settings.llm_reasoning_effort,
+            extra={"reasoning_effort": settings.llm_reasoning_effort},
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
     )
@@ -126,6 +128,24 @@ def create_pipeline(
         ),
     )
 
+    class ContextWindowProcessor(FrameProcessor):
+        """Keep the live voice context bounded to the newest exchanges."""
+
+        def __init__(self, max_messages: int):
+            super().__init__()
+            self._max_messages = max(2, max_messages)
+
+        async def process_frame(self, frame: Any, direction: Any):
+            if isinstance(frame, LLMContextFrame):
+                messages = frame.context.get_messages()
+                if len(messages) > self._max_messages:
+                    # The voice prompt is supplied separately to the LLM, so
+                    # retain only the newest conversation messages here.
+                    frame.context.set_messages(messages[-self._max_messages:])
+            await self.push_frame(frame, direction)
+
+    context_window = ContextWindowProcessor(settings.context_max_messages)
+
     user_transcript = TranscriptProcessor(transcript_collector)
     stt_metrics = MetricsProcessor(metrics_collector)
     turn_metrics = MetricsProcessor(metrics_collector, observe_user_turn=True)
@@ -140,6 +160,7 @@ def create_pipeline(
             user_transcript,
             stt_metrics,
             user_aggregator,
+            context_window,
             turn_metrics,
             llm,
             assistant_transcript,
