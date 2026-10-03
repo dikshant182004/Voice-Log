@@ -33,9 +33,12 @@ def create_pipeline(
     from pipecat.services.deepgram.stt import DeepgramSTTService
     from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
     from pipecat.services.groq.llm import GroqLLMService
+    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+    from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
+    from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+    from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-    # WebRTC audio is 16 kHz PCM. Pass the rate explicitly to Deepgram so
-    # there is no ambiguity about the live websocket input format.
     stt = DeepgramSTTService(
         api_key=settings.deepgram_api_key,
         sample_rate=16000,
@@ -91,16 +94,31 @@ def create_pipeline(
             stop_secs=settings.vad_stop_secs,
         ),
     )
+
+    # Only VAD is allowed to start a user turn. Pipecat's default also includes
+    # TranscriptionUserTurnStartStrategy, which can treat a late/interim
+    # Deepgram result as a brand-new turn and interrupt an LLM response.
+    # This prevents utterances such as "Do you support product" from being
+    # split into "Do you support" and "product".
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=vad,
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy(enable_interruptions=True)],
+                stop=[
+                    TurnAnalyzerUserTurnStopStrategy(
+                        turn_analyzer=LocalSmartTurnAnalyzerV3(
+                            params=SmartTurnParams(
+                                stop_secs=settings.smart_turn_stop_secs,
+                            )
+                        )
+                    )
+                ],
+            ),
         ),
     )
 
-    # Observe frames at the point where they actually exist. In particular,
-    # assistant text is observed BEFORE TTS consumes/transforms it, preventing
-    # duplicate/full-text re-emission after TTS.
     user_transcript = TranscriptProcessor(transcript_collector)
     stt_metrics = MetricsProcessor(metrics_collector)
     turn_metrics = MetricsProcessor(metrics_collector, observe_user_turn=True)
