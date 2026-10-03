@@ -112,7 +112,10 @@ def create_pipeline(
                 stop=[
                     SpeechTimeoutUserTurnStopStrategy(
                         user_speech_timeout=settings.user_speech_timeout,
-                        wait_for_transcript=True,
+                        # VAD is our turn boundary. Do not let a missing/late
+                        # Deepgram final frame strand the turn indefinitely.
+                        # The watchdog below remains the final safety net.
+                        wait_for_transcript=False,
                     )
                 ],
             ),
