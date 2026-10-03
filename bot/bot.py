@@ -25,7 +25,7 @@ from bot.observers.transcript import TranscriptCollector
 from bot.pipeline import create_pipeline
 from bot.reporter import CallReporter
 
-from pipecat.runner.workers import WorkerRunner
+from pipecat.workers.runner import WorkerRunner
 from pipecat.transports.smallwebrtc.request_handler import (
     IceCandidate,
     SmallWebRTCPatchRequest,
@@ -285,6 +285,8 @@ async def _run_session(
                 end_reason=reason,
             )
             active_sessions.pop(session.call_id, None)
+            if session.runner is not None:
+                await session.runner.end(reason=reason)
 
         @worker.event_handler("on_pipeline_error")
         async def on_pipeline_error(worker_instance: Any, frame: Any):
