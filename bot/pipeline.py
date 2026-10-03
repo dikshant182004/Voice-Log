@@ -1,10 +1,9 @@
-"""
-Pipecat voice pipeline for the Mini Call Log service.
+"""Pipecat 1.12.0 voice pipeline for the Mini Call Log service.
 
-Pipecat 1.12.0 pipeline:
-transport.input() -> Deepgram STT -> user aggregator (Silero VAD)
--> Groq LLM -> Cartesia/ElevenLabs TTS -> transport.output()
--> assistant aggregator.
+Audio path:
+SmallWebRTC input -> Deepgram STT -> user aggregator/VAD -> Groq -> Cartesia/ElevenLabs -> WebRTC output.
+Transcript and latency processors observe the real Pipecat frames without creating a second
+speech-recognition path in the browser.
 """
 
 from typing import Any
@@ -22,6 +21,7 @@ def create_pipeline(
     transport: Any,
 ):
     from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.worker import PipelineParams, PipelineWorker
     from pipecat.processors.aggregators.llm_context import LLMContext
@@ -34,14 +34,20 @@ def create_pipeline(
     from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
     from pipecat.services.groq.llm import GroqLLMService
 
+    # WebRTC audio is 16 kHz PCM. Pass the rate explicitly to Deepgram so
+    # there is no ambiguity about the live websocket input format.
     stt = DeepgramSTTService(
         api_key=settings.deepgram_api_key,
+        sample_rate=16000,
+        encoding="linear16",
+        channels=1,
         settings=DeepgramSTTService.Settings(
             model=settings.stt_model,
             language="en-US",
             endpointing=settings.endpointing_ms,
             interim_results=True,
             punctuate=True,
+            smart_format=True,
         ),
     )
 
@@ -79,16 +85,26 @@ def create_pipeline(
         )
 
     context = LLMContext()
+    vad = SileroVADAnalyzer(
+        sample_rate=16000,
+        params=VADParams(
+            stop_secs=settings.vad_stop_secs,
+        ),
+    )
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=vad,
         ),
     )
 
+    # Observe frames at the point where they actually exist. In particular,
+    # assistant text is observed BEFORE TTS consumes/transforms it, preventing
+    # duplicate/full-text re-emission after TTS.
     user_transcript = TranscriptProcessor(transcript_collector)
-    assistant_transcript = TranscriptProcessor(transcript_collector)
     input_metrics = MetricsProcessor(metrics_collector)
+    assistant_transcript = TranscriptProcessor(transcript_collector)
+    llm_metrics = MetricsProcessor(metrics_collector)
     output_metrics = MetricsProcessor(metrics_collector)
 
     pipeline = Pipeline(
@@ -99,8 +115,9 @@ def create_pipeline(
             input_metrics,
             user_aggregator,
             llm,
-            tts,
             assistant_transcript,
+            llm_metrics,
+            tts,
             output_metrics,
             transport.output(),
             assistant_aggregator,
