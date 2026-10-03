@@ -1,6 +1,4 @@
-"""
-Typed configuration for the Pipecat voice bot.
-"""
+"""Typed configuration for the Pipecat voice bot."""
 
 from typing import List, Optional
 
@@ -31,20 +29,31 @@ class BotSettings(BaseSettings):
     worker_base_url: str = Field(default="http://localhost:8787")
     ingest_token: str = Field(default="")
 
-    vad_stop_secs: float = Field(default=0.30)
-    endpointing_ms: int = Field(default=200)
-    smart_turn_stop_secs: float = Field(default=1.0)
+    # Turn detection tuning. VAD defines the speech boundary; the speech
+    # timeout gives the STT stream a short grace period to produce its final
+    # transcript before the LLM turn is submitted.
+    vad_stop_secs: float = Field(default=0.35)
+    user_speech_timeout: float = Field(default=0.55)
+    user_turn_stop_timeout: float = Field(default=4.0)
+    endpointing_ms: int = Field(default=250)
 
     max_call_seconds: int = Field(default=600)
     idle_timeout_seconds: int = Field(default=60)
 
     bot_host: str = Field(default="127.0.0.1")
     bot_port: int = Field(default=8765)
-    allowed_origins: str = Field(default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173")
+    allowed_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
     enable_debug_endpoints: bool = Field(default=False)
 
     def get_allowed_origins_list(self) -> List[str]:
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.allowed_origins.split(",")
+            if origin.strip()
+        ]
 
     def validate_keys(self) -> None:
         missing: list[str] = []
