@@ -1,9 +1,13 @@
 """Pipecat 1.12.0 voice pipeline for the Mini Call Log service.
 
 Audio path:
-SmallWebRTC input -> Deepgram STT -> user aggregator/VAD -> Groq -> Cartesia/ElevenLabs -> WebRTC output.
+SmallWebRTC input -> Deepgram STT -> VAD user-turn control -> Groq -> Cartesia/ElevenLabs -> WebRTC output.
 Transcript and latency processors observe the real Pipecat frames without creating a second
 speech-recognition path in the browser.
+
+Turn detection intentionally uses VAD for both turn start and turn stop. A short speech
+completion timeout gives the caller a deterministic boundary instead of depending on a
+smart-turn analyzer that can wait indefinitely for a later transcript event.
 """
 
 from typing import Any
@@ -33,10 +37,12 @@ def create_pipeline(
     from pipecat.services.deepgram.stt import DeepgramSTTService
     from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
     from pipecat.services.groq.llm import GroqLLMService
-    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-    from pipecat.turns.user_start.vad_user_turn_start_strategy import VADUserTurnStartStrategy
-    from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+    from pipecat.turns.user_start.vad_user_turn_start_strategy import (
+        VADUserTurnStartStrategy,
+    )
+    from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+        SpeechTimeoutUserTurnStopStrategy,
+    )
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
     stt = DeepgramSTTService(
@@ -90,16 +96,13 @@ def create_pipeline(
     context = LLMContext()
     vad = SileroVADAnalyzer(
         sample_rate=16000,
-        params=VADParams(
-            stop_secs=settings.vad_stop_secs,
-        ),
+        params=VADParams(stop_secs=settings.vad_stop_secs),
     )
 
-    # Only VAD is allowed to start a user turn. Pipecat's default also includes
-    # TranscriptionUserTurnStartStrategy, which can treat a late/interim
-    # Deepgram result as a brand-new turn and interrupt an LLM response.
-    # This prevents utterances such as "Do you support product" from being
-    # split into "Do you support" and "product".
+    # Keep VAD as the source of speech boundaries. The previous
+    # LocalSmartTurnAnalyzerV3 stop strategy could wait for a later transcript
+    # event after the microphone had already gone quiet, which is especially
+    # visible as a later conversational turn getting stuck.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
@@ -107,15 +110,15 @@ def create_pipeline(
             user_turn_strategies=UserTurnStrategies(
                 start=[VADUserTurnStartStrategy(enable_interruptions=True)],
                 stop=[
-                    TurnAnalyzerUserTurnStopStrategy(
-                        turn_analyzer=LocalSmartTurnAnalyzerV3(
-                            params=SmartTurnParams(
-                                stop_secs=settings.smart_turn_stop_secs,
-                            )
-                        )
+                    SpeechTimeoutUserTurnStopStrategy(
+                        user_speech_timeout=settings.user_speech_timeout,
+                        wait_for_transcript=True,
                     )
                 ],
             ),
+            # Safety net so a broken STT/turn signal cannot lock the user
+            # aggregator forever.
+            user_turn_stop_timeout=settings.user_turn_stop_timeout,
         ),
     )
 
