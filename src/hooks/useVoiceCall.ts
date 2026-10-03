@@ -183,7 +183,19 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
             }
           },
           onBotTranscript: (data: any) => {
-            appendTurn('assistant', data?.text || '');
+            const text = String(data?.text || '').trim();
+            if (!text) return;
+            setTranscript((prev) => {
+              const normalized = text.toLowerCase().replace(/\s+/g, ' ');
+              if (prev.some((turn) =>
+                turn.role === 'assistant' &&
+                turn.text.trim().toLowerCase().replace(/\s+/g, ' ') === normalized
+              )) {
+                return prev;
+              }
+              const elapsed = startTimeRef.current ? Date.now() - startTimeRef.current : 0;
+              return [...prev, { role: 'assistant', text, ts_ms: elapsed }];
+            });
           },
           onMetrics: (data: any) => {
             if (!data) return;
@@ -248,8 +260,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       // event listeners here. The client callbacks above receive the same RTVI
       // transcript events; registering both caused every answer to appear twice.
 
-      client.on(RTVIEvent.TrackStarted, (track: MediaStreamTrack) => {
-        if (track.kind !== 'audio') return;
+      client.on(RTVIEvent.TrackStarted, (track: MediaStreamTrack, participant?: any) => {
+        // Never play the local microphone track back through an audio element.
+        if (track.kind !== 'audio' || participant?.local) return;
         let audioEl = remoteAudioRef.current;
         if (!audioEl) {
           audioEl = new Audio();
@@ -269,8 +282,12 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       // getUserMedia() stream here: a second capture path can make debugging
       // echo/VAD behavior much harder and is not the audio sent to Pipecat.
       await client.initDevices();
-      await client.enableMic(true);
-      await client.connect();
+      await client.connect({
+        webrtcRequestParams: {
+          endpoint: botUrl + '/offer',
+          requestData: { call_id: newCallId },
+        },
+      });
     } catch (err: any) {
       console.warn('Voice call connection notice:', err?.message || err);
 
