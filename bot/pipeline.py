@@ -5,17 +5,20 @@ SmallWebRTC input -> Deepgram STT -> VAD user-turn control -> Groq -> Cartesia/E
 Transcript and latency processors observe the real Pipecat frames without creating a second
 speech-recognition path in the browser.
 
-Turn detection intentionally uses VAD for both turn start and turn stop. A short speech
-completion timeout gives the caller a deterministic boundary instead of depending on a
-smart-turn analyzer that can wait indefinitely for a later transcript event.
+Turn detection uses VAD for the speech boundary, but the stop strategy waits briefly for
+Deepgram's finalized transcript before submitting the LLM turn. A watchdog prevents a
+broken STT/turn signal from holding a call forever.
 """
 
+import logging
 from typing import Any
 
 from bot.config import BotSettings
 from bot.observers.metrics import MetricsCollector, MetricsProcessor
 from bot.observers.transcript import TranscriptCollector, TranscriptProcessor
 from bot.prompts import VOICE_SYSTEM_PROMPT
+
+logger = logging.getLogger("bot.pipeline")
 
 
 def create_pipeline(
@@ -64,11 +67,16 @@ def create_pipeline(
 
     llm = GroqLLMService(
         api_key=settings.groq_api_key,
+        retry_timeout_secs=settings.llm_retry_timeout_seconds,
+        retry_on_timeout=True,
         settings=GroqLLMService.Settings(
             model=settings.llm_model,
             temperature=0.2,
-            max_tokens=settings.llm_max_completion_tokens,
+            max_completion_tokens=settings.llm_max_completion_tokens,
             reasoning_effort=settings.llm_reasoning_effort,
+            # GPT-OSS can reason internally; do not return its reasoning payload
+            # to downstream processors when a concise spoken answer is all we need.
+            extra={"include_reasoning": False},
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
     )
@@ -102,10 +110,6 @@ def create_pipeline(
         params=VADParams(stop_secs=settings.vad_stop_secs),
     )
 
-    # Keep VAD as the source of speech boundaries. The previous
-    # LocalSmartTurnAnalyzerV3 stop strategy could wait for a later transcript
-    # event after the microphone had already gone quiet, which is especially
-    # visible as a later conversational turn getting stuck.
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
@@ -115,15 +119,14 @@ def create_pipeline(
                 stop=[
                     SpeechTimeoutUserTurnStopStrategy(
                         user_speech_timeout=settings.user_speech_timeout,
-                        # VAD is our turn boundary. Do not let a missing/late
-                        # Deepgram final frame strand the turn indefinitely.
-                        # The watchdog below remains the final safety net.
-                        wait_for_transcript=False,
+                        # Do not submit the turn until Deepgram has had a chance
+                        # to emit its finalized TranscriptionFrame. This avoids
+                        # the exact silent-turn race seen in the call logs.
+                        wait_for_transcript=True,
                     )
                 ],
             ),
-            # Safety net so a broken STT/turn signal cannot lock the user
-            # aggregator forever.
+            # Hard safety net if STT never produces a final transcript.
             user_turn_stop_timeout=settings.user_turn_stop_timeout,
         ),
     )
@@ -138,10 +141,32 @@ def create_pipeline(
         async def process_frame(self, frame: Any, direction: Any):
             if isinstance(frame, LLMContextFrame):
                 messages = frame.context.get_messages()
+                user_messages = [
+                    message.get("content", "")
+                    for message in messages
+                    if message.get("role") == "user"
+                ]
+                last_user = str(user_messages[-1]).strip() if user_messages else ""
+                if not last_user:
+                    logger.warning(
+                        "LLM context frame has no user message; LLM inference will be skipped"
+                    )
+                else:
+                    logger.debug(
+                        "LLM context ready: messages=%d last_user=%r",
+                        len(messages),
+                        last_user[:160],
+                    )
+
                 if len(messages) > self._max_messages:
                     # The voice prompt is supplied separately to the LLM, so
                     # retain only the newest conversation messages here.
                     frame.context.set_messages(messages[-self._max_messages:])
+                    logger.debug(
+                        "Trimmed LLM context from %d to %d messages",
+                        len(messages),
+                        self._max_messages,
+                    )
             await self.push_frame(frame, direction)
 
     context_window = ContextWindowProcessor(settings.context_max_messages)
