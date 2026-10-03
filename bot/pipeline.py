@@ -85,19 +85,23 @@ def create_pipeline(
             "Use 'cartesia' or 'elevenlabs'."
         )
 
-    transcript = TranscriptProcessor(transcript_collector)
-    metrics = MetricsProcessor(metrics_collector)
+    user_transcript = TranscriptProcessor(transcript_collector)
+    assistant_transcript = TranscriptProcessor(transcript_collector)
+    input_metrics = MetricsProcessor(metrics_collector)
+    output_metrics = MetricsProcessor(metrics_collector)
 
     pipeline = Pipeline(
         [
             transport.input(),
             vad,
             stt,
-            transcript,
-            metrics,
+            user_transcript,
+            input_metrics,
             context_aggregator.user(),
             llm,
             tts,
+            assistant_transcript,
+            output_metrics,
             transport.output(),
             context_aggregator.assistant(),
         ]
