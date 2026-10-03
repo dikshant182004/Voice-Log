@@ -1,174 +1,136 @@
-"""
-Pipeline Latency and Usage Metrics Collector.
-Collects turn-level latency breakdown (STT, LLM TTFB, TTS TTFB, Voice-to-Voice)
-and token/character consumption counters.
-Includes Pipecat FrameProcessor for streaming pipeline integration.
-"""
+"""Turn-level latency and usage metrics collected from actual Pipecat frames."""
 
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 import time
 
-try:
-  from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-  from pipecat.frames.frames import (
-    Frame,
-    MetricsFrame,
-    UserStoppedSpeakingFrame,
-    UserStartedSpeakingFrame,
-    TranscriptionFrame,
+from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
-    TTSStartedFrame,
+    MetricsFrame,
+    TextFrame,
+    TranscriptionFrame,
     TTSAudioRawFrame,
-  )
-  PIPECAT_AVAILABLE = True
-except ImportError:
-  PIPECAT_AVAILABLE = False
-  FrameProcessor = object
-  FrameDirection = None
-  Frame = None
+    TTSStartedFrame,
+    UserStoppedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 
 class MetricsCollector:
-  def __init__(self):
-    self.turn_metrics: List[Dict[str, Any]] = []
-    self.usage = {
-      "llm_input_tokens": 0,
-      "llm_output_tokens": 0,
-      "tts_chars": 0,
-    }
+    def __init__(self):
+        self.turn_metrics: List[Dict[str, Any]] = []
+        self.usage = {"llm_input_tokens": 0, "llm_output_tokens": 0, "tts_chars": 0}
+        self._user_speech_end_ts: Optional[float] = None
+        self._stt_final_ts: Optional[float] = None
+        self._llm_start_ts: Optional[float] = None
+        self._llm_first_token_ts: Optional[float] = None
+        self._tts_start_ts: Optional[float] = None
+        self._tts_first_audio_ts: Optional[float] = None
+        self._turn_index = 0
 
-    # Internal state for active turn timing
-    self._user_speech_end_ts: Optional[float] = None
-    self._stt_final_ts: Optional[float] = None
-    self._llm_start_ts: Optional[float] = None
-    self._llm_first_token_ts: Optional[float] = None
-    self._tts_start_ts: Optional[float] = None
-    self._tts_first_audio_ts: Optional[float] = None
+    def _now(self) -> float:
+        return time.perf_counter()
 
-  def mark_user_speech_end(self, ts: Optional[float] = None) -> None:
-    """Invoked when VAD detects end of user utterance."""
-    self._user_speech_end_ts = ts or time.time()
+    def mark_user_speech_end(self, ts: Optional[float] = None) -> None:
+        self._user_speech_end_ts = ts if ts is not None else self._now()
 
-  def mark_stt_final(self, ts: Optional[float] = None) -> None:
-    """Invoked when STT provider yields the final transcript."""
-    self._stt_final_ts = ts or time.time()
+    def mark_stt_final(self, ts: Optional[float] = None) -> None:
+        self._stt_final_ts = ts if ts is not None else self._now()
 
-  def mark_llm_start(self, ts: Optional[float] = None) -> None:
-    """Invoked when user context is sent to LLM."""
-    self._llm_start_ts = ts or time.time()
+    def mark_llm_start(self, ts: Optional[float] = None) -> None:
+        self._llm_start_ts = ts if ts is not None else self._now()
 
-  def mark_llm_first_token(self, ts: Optional[float] = None) -> None:
-    """Invoked when first streamed token arrives from LLM."""
-    if self._llm_first_token_ts is None:
-      self._llm_first_token_ts = ts or time.time()
+    def mark_llm_first_token(self, ts: Optional[float] = None) -> None:
+        if self._llm_first_token_ts is None:
+            self._llm_first_token_ts = ts if ts is not None else self._now()
 
-  def mark_tts_start(self, ts: Optional[float] = None) -> None:
-    """Invoked when text is sent to TTS synthesizer."""
-    if self._tts_start_ts is None:
-      self._tts_start_ts = ts or time.time()
+    def mark_tts_start(self, ts: Optional[float] = None) -> None:
+        if self._tts_start_ts is None:
+            self._tts_start_ts = ts if ts is not None else self._now()
 
-  def mark_tts_first_audio(self, ts: Optional[float] = None) -> None:
-    """Invoked when first audio frame is generated/sent to transport."""
-    if self._tts_first_audio_ts is None:
-      self._tts_first_audio_ts = ts or time.time()
+    def mark_tts_first_audio(self, ts: Optional[float] = None) -> None:
+        if self._tts_first_audio_ts is None:
+            self._tts_first_audio_ts = ts if ts is not None else self._now()
 
-  def record_usage(self, input_tokens: int = 0, output_tokens: int = 0, tts_chars: int = 0) -> None:
-    self.usage["llm_input_tokens"] += input_tokens
-    self.usage["llm_output_tokens"] += output_tokens
-    self.usage["tts_chars"] += tts_chars
+    def record_usage(self, input_tokens: int = 0, output_tokens: int = 0, tts_chars: int = 0) -> None:
+        self.usage["llm_input_tokens"] += int(input_tokens or 0)
+        self.usage["llm_output_tokens"] += int(output_tokens or 0)
+        self.usage["tts_chars"] += int(tts_chars or 0)
 
-  def finalize_turn_metrics(self, turn_index: int) -> Dict[str, Any]:
-    """
-    Computes delta latencies for the finished turn.
-    Returns nullable integers (in ms) where captured, or None if unmeasured.
-    """
-    stt_ms: Optional[int] = None
-    if self._user_speech_end_ts and self._stt_final_ts:
-      stt_ms = max(0, round((self._stt_final_ts - self._user_speech_end_ts) * 1000))
+    def finalize_turn(self) -> Optional[Dict[str, Any]]:
+        if self._tts_first_audio_ts is None:
+            return None
 
-    llm_ttfb_ms: Optional[int] = None
-    if self._llm_start_ts and self._llm_first_token_ts:
-      llm_ttfb_ms = max(0, round((self._llm_first_token_ts - self._llm_start_ts) * 1000))
+        def elapsed(start: Optional[float], end: Optional[float]) -> Optional[int]:
+            if start is None or end is None:
+                return None
+            return max(0, round((end - start) * 1000))
 
-    tts_ttfb_ms: Optional[int] = None
-    if self._tts_start_ts and self._tts_first_audio_ts:
-      tts_ttfb_ms = max(0, round((self._tts_first_audio_ts - self._tts_start_ts) * 1000))
+        record = {
+            "turn_index": self._turn_index,
+            "stt_ms": elapsed(self._user_speech_end_ts, self._stt_final_ts),
+            "llm_ttfb_ms": elapsed(self._llm_start_ts, self._llm_first_token_ts),
+            "tts_ttfb_ms": elapsed(self._tts_start_ts, self._tts_first_audio_ts),
+            "voice_to_voice_ms": elapsed(
+                self._user_speech_end_ts, self._tts_first_audio_ts
+            ),
+        }
+        self.turn_metrics.append(record)
+        self._turn_index += 1
+        self._user_speech_end_ts = None
+        self._stt_final_ts = None
+        self._llm_start_ts = None
+        self._llm_first_token_ts = None
+        self._tts_start_ts = None
+        self._tts_first_audio_ts = None
+        return record
 
-    voice_to_voice_ms: Optional[int] = None
-    if self._user_speech_end_ts and self._tts_first_audio_ts:
-      voice_to_voice_ms = max(0, round((self._tts_first_audio_ts - self._user_speech_end_ts) * 1000))
+    def get_metrics(self) -> List[Dict[str, Any]]:
+        return list(self.turn_metrics)
 
-    record = {
-      "turn_index": turn_index,
-      "stt_ms": stt_ms,
-      "llm_ttfb_ms": llm_ttfb_ms,
-      "tts_ttfb_ms": tts_ttfb_ms,
-      "voice_to_voice_ms": voice_to_voice_ms,
-    }
-    self.turn_metrics.append(record)
-
-    # Reset per-turn timestamps
-    self._user_speech_end_ts = None
-    self._stt_final_ts = None
-    self._llm_start_ts = None
-    self._llm_first_token_ts = None
-    self._tts_start_ts = None
-    self._tts_first_audio_ts = None
-
-    return record
-
-  def add_turn_metric(
-    self,
-    turn_index: int,
-    stt_ms: Optional[int] = None,
-    llm_ttfb_ms: Optional[int] = None,
-    tts_ttfb_ms: Optional[int] = None,
-    voice_to_voice_ms: Optional[int] = None,
-  ) -> Dict[str, Any]:
-    """Records an explicitly supplied turn metric directly."""
-    record = {
-      "turn_index": turn_index,
-      "stt_ms": stt_ms,
-      "llm_ttfb_ms": llm_ttfb_ms,
-      "tts_ttfb_ms": tts_ttfb_ms,
-      "voice_to_voice_ms": voice_to_voice_ms,
-    }
-    self.turn_metrics.append(record)
-    return record
-
-  def get_metrics(self) -> List[Dict[str, Any]]:
-    return list(self.turn_metrics)
-
-  def get_usage(self) -> Dict[str, int]:
-    return dict(self.usage)
+    def get_usage(self) -> Dict[str, int]:
+        return dict(self.usage)
 
 
-class MetricsProcessor(FrameProcessor if PIPECAT_AVAILABLE else object):
-  """
-  Pipecat pipeline frame processor that observes audio, STT, LLM, and TTS frames
-  to compute real-time latency milestones.
-  """
-  def __init__(self, collector: MetricsCollector):
-    if PIPECAT_AVAILABLE:
-      super().__init__()
-    self._collector = collector
+class MetricsProcessor(FrameProcessor):
+    def __init__(self, collector: MetricsCollector, *, observe_user_turn: bool = False):
+        super().__init__()
+        self._collector = collector
+        self._observe_user_turn = observe_user_turn
 
-  async def process_frame(self, frame: Any, direction: Any):
-    if PIPECAT_AVAILABLE:
-      await super().process_frame(frame, direction)
-      if isinstance(frame, UserStoppedSpeakingFrame):
-        self._collector.mark_user_speech_end()
-      elif isinstance(frame, TranscriptionFrame):
-        self._collector.mark_stt_final()
-      elif isinstance(frame, LLMFullResponseStartFrame):
-        self._collector.mark_llm_first_token()
-      elif isinstance(frame, TTSStartedFrame):
-        self._collector.mark_tts_start()
-      elif isinstance(frame, TTSAudioRawFrame):
-        self._collector.mark_tts_first_audio()
-      elif isinstance(frame, MetricsFrame):
-        # Capture token and character usage if present in metrics frames
-        for m in getattr(frame, "data", []):
-          if getattr(m, "processor", "") == "llm":
-            pass
-      await self.push_frame(frame, direction)
+    async def process_frame(self, frame: Any, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # UserStoppedSpeakingFrame is emitted by the user turn aggregator.
+        # Therefore this processor must sit AFTER user_aggregator to measure
+        # actual end-of-speech, not before it.
+        if self._observe_user_turn and isinstance(
+            frame, (UserStoppedSpeakingFrame, VADUserStoppedSpeakingFrame)
+        ):
+            self._collector.mark_user_speech_end()
+
+        if isinstance(frame, TranscriptionFrame):
+            self._collector.mark_stt_final()
+        elif isinstance(frame, LLMFullResponseStartFrame):
+            self._collector.mark_llm_start()
+        elif isinstance(frame, TextFrame) and self._collector._llm_start_ts is not None:
+            self._collector.mark_llm_first_token()
+        elif isinstance(frame, TTSStartedFrame):
+            self._collector.mark_tts_start()
+        elif isinstance(frame, TTSAudioRawFrame):
+            self._collector.mark_tts_first_audio()
+            self._collector.finalize_turn()
+        elif isinstance(frame, MetricsFrame):
+            for metric in getattr(frame, "data", []) or []:
+                processor = str(getattr(metric, "processor", "")).lower()
+                if "llm" in processor or "groq" in processor:
+                    self._collector.record_usage(
+                        input_tokens=getattr(metric, "prompt_tokens", 0) or 0,
+                        output_tokens=getattr(metric, "completion_tokens", 0) or 0,
+                    )
+                elif "tts" in processor or "cartesia" in processor:
+                    self._collector.record_usage(
+                        tts_chars=getattr(metric, "characters", 0) or 0
+                    )
+
+        await self.push_frame(frame, direction)

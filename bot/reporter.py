@@ -18,7 +18,7 @@ import os
 import random
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional, Set, List
+from typing import Dict, Any, Optional, Set, List, Literal
 
 try:
   from pydantic import BaseModel, Field
@@ -78,8 +78,8 @@ class IngestCallPayloadModel(BaseModel):
   started_at: str
   ended_at: str
   duration_ms: int = Field(ge=0)
-  status: str
-  end_reason: Optional[str] = None
+  status: Literal["completed", "disconnected", "error"]
+  end_reason: Optional[Literal["user_hangup", "client_disconnect", "error", "timeout"]] = None
   config: CallConfigModel = Field(default_factory=CallConfigModel)
   transcript: List[TranscriptTurnModel] = Field(default_factory=list)
   metrics: List[TurnMetricModel] = Field(default_factory=list)
@@ -113,12 +113,9 @@ class CallReporter:
 
   async def finalize_and_report(self, payload: Dict[str, Any]) -> bool:
     """Finalizes once and reports the payload. If already finalized, returns True without duplicate send."""
-    if self._finalized:
-      return True
     call_id = payload.get("call_id", "unknown")
     if not await self.finalize_call(call_id):
       return True
-    self._finalized = True
     return await self.report_call(payload)
 
   def validate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:

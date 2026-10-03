@@ -1,338 +1,428 @@
 """
-Pipecat Voice AI Agent Server with FastAPI and WebRTC Signaling.
-Handles browser WebRTC connections, runs conversational voice pipeline,
-and ingests completed call records into the Cloudflare Worker API.
+FastAPI host for the Pipecat 1.12.0 SmallWebRTC voice bot.
+
+The Worker only receives finalized call data. WebRTC/audio processing stays
+inside the Pipecat bot process.
 """
 
 import asyncio
 import contextvars
 import datetime
 import logging
-import signal
 import sys
-import time
 import uuid
-from typing import Dict, Any, Optional
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import httpx
 
 from bot.config import settings
-from bot.observers.transcript import TranscriptCollector
 from bot.observers.metrics import MetricsCollector
+from bot.observers.transcript import TranscriptCollector
+from bot.pipeline import create_pipeline
 from bot.reporter import CallReporter
 
-# Context variable for binding call_id to log records
-current_call_id: contextvars.ContextVar[str] = contextvars.ContextVar("current_call_id", default="-")
+from pipecat.workers.runner import WorkerRunner
+from pipecat.transports.smallwebrtc.request_handler import (
+    IceCandidate,
+    SmallWebRTCPatchRequest,
+    SmallWebRTCRequest,
+    SmallWebRTCRequestHandler,
+)
+
+current_call_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_call_id", default="-"
+)
 
 
 class CallIdFilter(logging.Filter):
-  def filter(self, record):
-    record.call_id = current_call_id.get()
-    return True
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.call_id = current_call_id.get()
+        return True
 
 
-# Configure logging with call_id in format
-log_handler = logging.StreamHandler(sys.stdout)
-log_formatter = logging.Formatter(
-  "%(asctime)s [%(levelname)s] [call_id=%(call_id)s] %(name)s: %(message)s"
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s [%(levelname)s] [call_id=%(call_id)s] "
+        "%(name)s: %(message)s"
+    )
 )
-log_handler.setFormatter(log_formatter)
-log_handler.addFilter(CallIdFilter())
+handler.addFilter(CallIdFilter())
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
-root_logger.handlers = [log_handler]
-
+root_logger.handlers = [handler]
 logger = logging.getLogger("bot.server")
 
-# Global HTTP client and reporter
 http_client: Optional[httpx.AsyncClient] = None
 reporter: Optional[CallReporter] = None
+webrtc_handler = SmallWebRTCRequestHandler()
 
 
 class CallSession:
-  """
-  Encapsulates a single active voice session.
-  Owns collectors, timeout tasks, and the finalize-once guard.
-  """
-  def __init__(self, call_id: str, reporter: CallReporter):
-    self.call_id = call_id
-    self.reporter = reporter
-    self.started_at_dt = datetime.datetime.now(datetime.timezone.utc)
-    self.started_at = self.started_at_dt.isoformat()
-    self.ended_at: Optional[str] = None
-    self.duration_ms: int = 0
-    self.status: str = "connecting"
-    self.end_reason: Optional[str] = None
-    self.transcript = TranscriptCollector()
-    self.metrics = MetricsCollector()
-    self._finalized = False
-    self._lock = asyncio.Lock()
-    self._max_duration_task: Optional[asyncio.Task] = None
-    self._idle_task: Optional[asyncio.Task] = None
+    def __init__(self, call_id: str, reporter_instance: CallReporter):
+        self.call_id = call_id
+        self.reporter = reporter_instance
+        self.started_at_dt = datetime.datetime.now(datetime.timezone.utc)
+        self.started_at = self.started_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        self.ended_at: Optional[str] = None
+        self.duration_ms = 0
+        self.status = "connecting"
+        self.end_reason: Optional[str] = None
 
-  def start_timers(self):
-    loop = asyncio.get_event_loop()
-    self._max_duration_task = loop.create_task(self._enforce_max_duration())
-    self._idle_task = loop.create_task(self._enforce_idle_timeout())
+        self.transcript = TranscriptCollector(
+            start_time=self.started_at_dt.timestamp()
+        )
+        self.metrics = MetricsCollector()
 
-  async def _enforce_max_duration(self):
-    try:
-      await asyncio.sleep(settings.max_call_seconds)
-      logger.warning("Call reached maximum duration limit; terminating", extra={"call_id": self.call_id})
-      await self.finalize(status="completed", end_reason="timeout")
-    except asyncio.CancelledError:
-      pass
+        self.runner: Optional[WorkerRunner] = None
+        self.runner_task: Optional[asyncio.Task] = None
+        self._finalized = False
+        self._lock = asyncio.Lock()
+        self._max_duration_task: Optional[asyncio.Task] = None
 
-  async def _enforce_idle_timeout(self):
-    try:
-      await asyncio.sleep(settings.idle_timeout_seconds)
-      logger.info("Call reached silence idle timeout; disconnecting", extra={"call_id": self.call_id})
-      await self.finalize(status="completed", end_reason="timeout")
-    except asyncio.CancelledError:
-      pass
+    def start_timer(self) -> None:
+        self._max_duration_task = asyncio.create_task(self._enforce_max_duration())
 
-  def reset_idle_timer(self):
-    if self._idle_task and not self._idle_task.done():
-      self._idle_task.cancel()
-    loop = asyncio.get_event_loop()
-    self._idle_task = loop.create_task(self._enforce_idle_timeout())
+    async def _enforce_max_duration(self) -> None:
+        try:
+            await asyncio.sleep(settings.max_call_seconds)
+            await self.request_stop("timeout")
+        except asyncio.CancelledError:
+            pass
 
-  async def finalize(self, status: str = "completed", end_reason: str = "user_hangup") -> bool:
-    async with self._lock:
-      if self._finalized:
-        return True
-      self._finalized = True
+    async def request_stop(self, reason: str) -> None:
+        self.end_reason = reason
+        if self.runner is not None:
+            try:
+                await self.runner.cancel(reason=reason)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cancel runner for %s: %s", self.call_id, exc
+                )
 
-    # Cancel timers
-    if self._max_duration_task and not self._max_duration_task.done():
-      self._max_duration_task.cancel()
-    if self._idle_task and not self._idle_task.done():
-      self._idle_task.cancel()
+    async def finalize(
+        self,
+        status: str = "completed",
+        end_reason: str = "user_hangup",
+    ) -> bool:
+        async with self._lock:
+            if self._finalized:
+                return True
+            self._finalized = True
 
-    ended_at_dt = datetime.datetime.now(datetime.timezone.utc)
-    self.ended_at = ended_at_dt.isoformat()
-    self.duration_ms = max(500, int((ended_at_dt - self.started_at_dt).total_seconds() * 1000))
-    self.status = status
-    self.end_reason = end_reason
+        if self._max_duration_task and not self._max_duration_task.done():
+            self._max_duration_task.cancel()
 
-    turns = self.transcript.get_turns()
-    metrics = self.metrics.get_metrics()
-    if not turns:
-      turns = [
-        {"turn_index": 0, "role": "user", "text": "Hello, can you hear me?", "ts_ms": 1000, "interrupted": False},
-        {"turn_index": 1, "role": "assistant", "text": "Hello! Yes, I can hear you clearly. How can I assist you with your inquiry today?", "ts_ms": 1650, "interrupted": False},
-      ]
-      metrics = [
-        {"turn_index": 1, "stt_ms": 128, "llm_ttfb_ms": 185, "tts_ttfb_ms": 108, "voice_to_voice_ms": 650}
-      ]
+        ended_at_dt = datetime.datetime.now(datetime.timezone.utc)
+        self.ended_at = ended_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        self.duration_ms = max(
+            0,
+            round((ended_at_dt - self.started_at_dt).total_seconds() * 1000),
+        )
+        self.status = status
+        self.end_reason = end_reason
 
-    payload = {
-      "call_id": self.call_id,
-      "started_at": self.started_at,
-      "ended_at": self.ended_at,
-      "duration_ms": self.duration_ms,
-      "status": self.status,
-      "end_reason": self.end_reason,
-      "config": {
-        "stt": f"deepgram:{settings.stt_model}",
-        "llm": f"groq:{settings.llm_model}",
-        "tts": f"{settings.tts_provider}:{settings.tts_voice_id}",
-        "persona": "default",
-      },
-      "transcript": turns,
-      "metrics": metrics,
-      "usage": self.metrics.get_usage(),
-    }
+        payload = {
+            "call_id": self.call_id,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "duration_ms": self.duration_ms,
+            "status": self.status,
+            "end_reason": self.end_reason,
+            "config": {
+                "stt": f"deepgram:{settings.stt_model}",
+                "llm": f"groq:{settings.llm_model}",
+                "tts": f"{settings.tts_provider}:{settings.tts_model}",
+                "persona": "default",
+            },
+            "transcript": self.transcript.get_turns(),
+            "metrics": self.metrics.get_metrics(),
+            "usage": self.metrics.get_usage(),
+        }
 
-    logger.info(f"Finalizing session {self.call_id}. Dispatching report payload...")
-    return await self.reporter.report_call(payload)
+        current_call_id.set(self.call_id)
+        logger.info(
+            "Finalizing call: transcript=%d turns, metrics=%d records",
+            len(payload["transcript"]),
+            len(payload["metrics"]),
+        )
+        return await self.reporter.report_call(payload)
 
 
-# Active sessions map { call_id: CallSession }
-active_sessions: Dict[str, CallSession] = {}
+active_sessions: dict[str, CallSession] = {}
 
 
-async def measure_provider_rtt(client: httpx.AsyncClient):
-  """Measures round-trip time to voice AI providers at startup."""
-  endpoints = [
-    ("Groq", "https://api.groq.com/openai/v1/models"),
-    ("Deepgram", "https://api.deepgram.com/v1/projects"),
-  ]
-  for name, url in endpoints:
-    start = time.perf_counter()
-    try:
-      await client.get(url, timeout=3.0)
-      rtt_ms = round((time.perf_counter() - start) * 1000)
-      logger.info(f"Provider RTT: {name} connection RTT = {rtt_ms}ms")
-    except Exception as exc:
-      logger.warning(f"Provider RTT check warning for {name}: {exc}")
+async def measure_provider_rtt(client: httpx.AsyncClient) -> None:
+    for name, url in (
+        ("Groq", "https://api.groq.com/openai/v1/models"),
+        ("Deepgram", "https://api.deepgram.com/v1/projects"),
+    ):
+        try:
+            started = asyncio.get_running_loop().time()
+            headers = {}
+            if name == "Groq":
+                headers["Authorization"] = f"Bearer {settings.groq_api_key}"
+            elif name == "Deepgram":
+                headers["Authorization"] = f"Token {settings.deepgram_api_key}"
+            await client.get(url, headers=headers, timeout=3.0)
+            elapsed = round(
+                (asyncio.get_running_loop().time() - started) * 1000
+            )
+            logger.info("Provider RTT: %s=%sms", name, elapsed)
+        except Exception as exc:
+            logger.warning("Provider RTT check failed for %s: %s", name, exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-  global http_client, reporter
+    global http_client, reporter
 
-  # 1. Validate required environment variables at startup
-  try:
     settings.validate_keys()
-    logger.info("Environment configuration validated successfully.")
-  except ValueError as e:
-    logger.critical(f"FATAL CONFIGURATION ERROR: {e}")
-    sys.exit(1)
 
-  # 2. Initialize persistent HTTP client and reporter
-  http_client = httpx.AsyncClient(timeout=8.0)
-  reporter = CallReporter(
-    worker_base_url=settings.worker_base_url,
-    ingest_token=settings.ingest_token,
-    client=http_client,
-  )
+    http_client = httpx.AsyncClient(timeout=8.0)
+    reporter = CallReporter(
+        worker_base_url=settings.worker_base_url,
+        ingest_token=settings.ingest_token,
+        client=http_client,
+    )
 
-  # 3. Network warmup & RTT measurement
-  await measure_provider_rtt(http_client)
+    await measure_provider_rtt(http_client)
+    flushed = await reporter.flush_spool()
+    logger.info("Flushed %d spooled call(s)", flushed)
 
-  # 4. Flush any offline spooled calls from previous sessions
-  flushed = await reporter.flush_spool()
-  logger.info(f"Startup check: flushed {flushed} offline spooled call(s).")
+    yield
 
-  yield
+    for session in list(active_sessions.values()):
+        try:
+            await session.request_stop("server_shutdown")
+            await session.finalize(
+                status="disconnected",
+                end_reason="client_disconnect",
+            )
+        except Exception as exc:
+            logger.error(
+                "Error finalizing call %s: %s", session.call_id, exc
+            )
 
-  # Graceful Shutdown: finalize all open sessions
-  logger.info("Server shutting down. Finalizing all active calls...")
-  for call_id, session in list(active_sessions.items()):
-    try:
-      await session.finalize(status="disconnected", end_reason="server_shutdown")
-    except Exception as exc:
-      logger.error(f"Error finalizing session {call_id}: {exc}")
+    await webrtc_handler.close()
 
-  if http_client and not http_client.is_closed:
-    await http_client.aclose()
+    if http_client and not http_client.is_closed:
+        await http_client.aclose()
 
 
-app = FastAPI(title="Pipecat Voice Bot Signaling Server", lifespan=lifespan)
+app = FastAPI(title="Pipecat Voice Bot", lifespan=lifespan)
 
-# Allow CORS unconditionally across all ports, loopback addresses, and preview URLs
 app.add_middleware(
-  CORSMiddleware,
-  allow_origins=["*"],
-  allow_credentials=False,
-  allow_methods=["*"],
-  allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=settings.get_allowed_origins_list(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
-
-
-class WebRTCOfferRequest(BaseModel):
-  sdp: str
-  type: str
-  call_id: Optional[str] = None
-
-
-class IceCandidateItem(BaseModel):
-  candidate: str
-  sdp_mid: Optional[str] = None
-  sdp_mline_index: Optional[int] = None
-
-
-class IceCandidatesPayload(BaseModel):
-  pc_id: Optional[str] = None
-  candidates: list[IceCandidateItem] = []
 
 
 @app.get("/health")
 async def health_check():
-  return {
-    "status": "ok",
-    "service": "pipecat-voice-bot",
-    "active_calls": len(active_sessions),
-    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-  }
+    return {
+        "status": "ok",
+        "service": "pipecat-voice-bot",
+        "active_calls": len(active_sessions),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
 
 
 @app.get("/status")
 async def bot_status():
-  return {
-    "stt": settings.stt_model,
-    "llm": settings.llm_model,
-    "tts": settings.tts_provider,
-    "vad_stop_secs": settings.vad_stop_secs,
-    "endpointing_ms": settings.endpointing_ms,
-    "active_sessions": len(active_sessions),
-  }
+    return {
+        "stt": settings.stt_model,
+        "llm": settings.llm_model,
+        "tts": settings.tts_provider,
+        "vad_stop_secs": settings.vad_stop_secs,
+        "endpointing_ms": settings.endpointing_ms,
+        "llm_reasoning_effort": settings.llm_reasoning_effort,
+        "llm_max_completion_tokens": settings.llm_max_completion_tokens,
+        "context_max_messages": settings.context_max_messages,
+        "active_sessions": len(active_sessions),
+    }
 
 
-from bot.sdp import generate_sdp_answer
+async def _run_session(
+    session: CallSession,
+    connection: Any,
+) -> None:
+    transport = None
+    try:
+        from pipecat.transports.base_transport import TransportParams
+
+        transport = __import__(
+            "pipecat.transports.smallwebrtc.transport",
+            fromlist=["SmallWebRTCTransport"],
+        ).SmallWebRTCTransport(
+            webrtc_connection=connection,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_in_sample_rate=16000,
+                audio_out_sample_rate=settings.tts_sample_rate,
+                # SmallWebRTCTransport must pass captured PCM frames downstream to Deepgram.
+                # False would keep the transport connected while starving the STT processor.
+                audio_in_passthrough=True,
+            ),
+        )
+
+        _, worker = create_pipeline(
+            settings,
+            session.transcript,
+            session.metrics,
+            transport,
+        )
+        session.runner = WorkerRunner(
+            handle_sigint=False,
+            handle_sigterm=False,
+        )
+        await session.runner.add_workers(worker)
+
+        @worker.event_handler("on_pipeline_finished")
+        async def on_pipeline_finished(worker_instance: Any, frame: Any):
+            reason = session.end_reason or "client_disconnect"
+            await session.finalize(
+                status="disconnected" if reason == "client_disconnect" else "completed",
+                end_reason=reason,
+            )
+            active_sessions.pop(session.call_id, None)
+
+        @worker.event_handler("on_pipeline_error")
+        async def on_pipeline_error(worker_instance: Any, frame: Any):
+            logger.error(
+                "Pipeline error for %s: %s",
+                session.call_id,
+                getattr(frame, "error", frame),
+            )
+
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(
+            transport_instance: Any, client: Any
+        ):
+            session.end_reason = session.end_reason or "client_disconnect"
+            asyncio.create_task(session.request_stop(session.end_reason))
+
+        session.runner_task = asyncio.create_task(
+            session.runner.run(auto_end=False)
+        )
+        logger.info("Pipecat pipeline started for call %s", session.call_id)
+
+    except Exception:
+        logger.exception("Failed to start Pipecat pipeline for %s", session.call_id)
+        await session.finalize(
+            status="error",
+            end_reason="error",
+        )
+        active_sessions.pop(session.call_id, None)
 
 
 @app.post("/offer")
-async def handle_webrtc_offer(offer: WebRTCOfferRequest):
-  """
-  WebRTC SDP offer negotiation endpoint for Pipecat SmallWebRTC.
-  Initializes a CallSession with isolated collectors, negotiates SDP,
-  and attaches the Pipecat voice pipeline.
-  """
-  call_id = offer.call_id or str(uuid.uuid4())
-  current_call_id.set(call_id)
-  logger.info(f"Received WebRTC offer for call {call_id}")
+async def handle_webrtc_offer(payload: dict):
+    if reporter is None:
+        raise HTTPException(status_code=500, detail="Reporter not initialized")
 
-  if not reporter:
-    raise HTTPException(status_code=500, detail="Reporter not initialized")
+    request = SmallWebRTCRequest.from_dict(payload)
+    request_call_id = None
+    if isinstance(request.request_data, dict):
+        request_call_id = request.request_data.get("call_id")
 
-  session = CallSession(call_id, reporter)
-  active_sessions[call_id] = session
-  session.start_timers()
+    call_id = request_call_id or str(uuid.uuid4())
+    if call_id in active_sessions:
+        raise HTTPException(status_code=409, detail="Call ID is already active")
 
-  answer_sdp = generate_sdp_answer(offer.sdp)
+    current_call_id.set(call_id)
+    session = CallSession(call_id, reporter)
+    active_sessions[call_id] = session
+    session.start_timer()
 
-  return {
-    "call_id": call_id,
-    "pc_id": call_id,
-    "type": "answer",
-    "sdp": answer_sdp,
-  }
+    async def on_connection(connection: Any):
+        await _run_session(session, connection)
+
+    answer = await webrtc_handler.handle_web_request(request, on_connection)
+    if answer is None:
+        active_sessions.pop(call_id, None)
+        raise HTTPException(status_code=500, detail="No WebRTC answer generated")
+
+    return {
+        **answer,
+        "call_id": call_id,
+    }
 
 
 @app.patch("/offer")
-async def handle_ice_candidates(payload: IceCandidatesPayload):
-  """Accepts trickle ICE candidates sent by SmallWebRTCTransport."""
-  logger.debug(f"Received {len(payload.candidates)} ICE candidate(s) for pc_id {payload.pc_id}")
-  return {"status": "ok", "pc_id": payload.pc_id, "count": len(payload.candidates)}
+async def handle_ice_candidates(payload: dict):
+    try:
+        request = SmallWebRTCPatchRequest(
+            pc_id=payload["pc_id"],
+            candidates=[
+                IceCandidate(
+                    candidate=item.get("candidate", ""),
+                    sdp_mid=item.get("sdp_mid"),
+                    sdp_mline_index=item.get("sdp_mline_index"),
+                )
+                for item in payload.get("candidates", [])
+            ],
+        )
+        await webrtc_handler.handle_patch_request(request)
+        return {"status": "ok", "pc_id": request.pc_id}
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Missing field: {exc.args[0]}"
+        ) from exc
 
 
 @app.post("/hangup/{call_id}")
 async def handle_hangup(call_id: str):
-  """Explicit hangup trigger from client."""
-  session = active_sessions.pop(call_id, None)
-  if not session:
-    logger.info(f"Hangup trigger for session {call_id} not found in memory; creating recovery session...")
-    if reporter:
-      session = CallSession(call_id, reporter)
-    else:
-      raise HTTPException(status_code=500, detail="Reporter not initialized")
+    session = active_sessions.get(call_id)
+    if not session:
+        return {
+            "message": "Call already finalized or not found",
+            "call_id": call_id,
+            "persisted": True,
+        }
 
-  current_call_id.set(call_id)
-  persisted = await session.finalize(status="completed", end_reason="user_hangup")
-  return {
-    "message": "Call finalized",
-    "call_id": call_id,
-    "persisted": bool(persisted),
-    "spooled": not bool(persisted)
-  }
+    session.end_reason = "user_hangup"
+    await session.request_stop("user_hangup")
+
+    if session.runner_task:
+        try:
+            await asyncio.wait_for(asyncio.shield(session.runner_task), timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+
+    persisted = await session.finalize(
+        status="completed",
+        end_reason="user_hangup",
+    )
+    active_sessions.pop(call_id, None)
+
+    return {
+        "message": "Call finalized",
+        "call_id": call_id,
+        "persisted": bool(persisted),
+        "spooled": not bool(persisted),
+    }
 
 
-def main():
-  import uvicorn
-  uvicorn.run(
-    "bot.bot:app",
-    host=settings.bot_host,
-    port=settings.bot_port,
-    log_level="info",
-  )
+def main() -> None:
+    import uvicorn
+
+    uvicorn.run(
+        "bot.bot:app",
+        host=settings.bot_host,
+        port=settings.bot_port,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":
-  main()
+    main()
