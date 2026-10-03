@@ -164,7 +164,12 @@ async def measure_provider_rtt(client: httpx.AsyncClient) -> None:
     ):
         try:
             started = asyncio.get_running_loop().time()
-            await client.get(url, timeout=3.0)
+            headers = {}
+            if name == "Groq":
+                headers["Authorization"] = f"Bearer {settings.groq_api_key}"
+            elif name == "Deepgram":
+                headers["Authorization"] = f"Token {settings.deepgram_api_key}"
+            await client.get(url, headers=headers, timeout=3.0)
             elapsed = round(
                 (asyncio.get_running_loop().time() - started) * 1000
             )
