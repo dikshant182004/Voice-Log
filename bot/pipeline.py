@@ -102,7 +102,8 @@ def create_pipeline(
     # assistant text is observed BEFORE TTS consumes/transforms it, preventing
     # duplicate/full-text re-emission after TTS.
     user_transcript = TranscriptProcessor(transcript_collector)
-    input_metrics = MetricsProcessor(metrics_collector)
+    stt_metrics = MetricsProcessor(metrics_collector)
+    turn_metrics = MetricsProcessor(metrics_collector, observe_user_turn=True)
     assistant_transcript = TranscriptProcessor(transcript_collector)
     llm_metrics = MetricsProcessor(metrics_collector)
     output_metrics = MetricsProcessor(metrics_collector)
@@ -112,8 +113,9 @@ def create_pipeline(
             transport.input(),
             stt,
             user_transcript,
-            input_metrics,
+            stt_metrics,
             user_aggregator,
+            turn_metrics,
             llm,
             assistant_transcript,
             llm_metrics,
