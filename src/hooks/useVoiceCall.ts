@@ -38,68 +38,43 @@ export interface UseVoiceCallReturn {
 export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoiceCallReturn {
   const [callState, setCallState] = useState<CallState>('idle');
   const [callId, setCallId] = useState<string | null>(null);
-  const [durationSeconds, setDurationSeconds] = useState<number>(0);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState<boolean>(false);
+  const [durationSeconds, setDurationSeconds] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
   const [transcript, setTranscript] = useState<TurnData[]>([]);
-  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [interimTranscript, setInterimTranscript] = useState('');
   const [latestMetrics, setLatestMetrics] = useState<TurnMetrics | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
   const clientRef = useRef<PipecatClient | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(0);
+  const startTimeRef = useRef(0);
   const callIdRef = useRef<string | null>(null);
-  const callStateRef = useRef<CallState>('idle');
-  const isMutedRef = useRef<boolean>(false);
-  const isAssistantSpeakingRef = useRef<boolean>(false);
+  const isAssistantSpeakingRef = useRef(false);
 
   useEffect(() => {
     callIdRef.current = callId;
   }, [callId]);
 
   useEffect(() => {
-    callStateRef.current = callState;
-  }, [callState]);
-
-  useEffect(() => {
-    isMutedRef.current = isMuted;
-  }, [isMuted]);
-
-  useEffect(() => {
     isAssistantSpeakingRef.current = isAssistantSpeaking;
   }, [isAssistantSpeaking]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      if (clientRef.current) {
-        clientRef.current.disconnect().catch(() => {});
-        clientRef.current = null;
-      }
-      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-        audioCtxRef.current.close().catch(() => {});
-        audioCtxRef.current = null;
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (clientRef.current) clientRef.current.disconnect().catch(() => {});
       if (remoteAudioRef.current) {
         remoteAudioRef.current.pause();
         remoteAudioRef.current.srcObject = null;
-        remoteAudioRef.current = null;
       }
     };
   }, []);
 
   const endCall = useCallback(async () => {
-    if (callState === 'idle' || callState === 'ending' || callState === 'reported') {
-      return;
-    }
+    if (callState === 'idle' || callState === 'ending' || callState === 'reported') return;
 
     const wasLiveCall = callState === 'live' && durationSeconds > 0;
     setCallState('ending');
@@ -112,43 +87,31 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
 
     const currentCallId = callIdRef.current;
 
-    // Disconnect Pipecat WebRTC client
     if (clientRef.current) {
       try {
         await clientRef.current.disconnect();
-      } catch (err) {
-        // Suppress benign stop() / disconnect transport errors
-      }
+      } catch (_) {}
       clientRef.current = null;
     }
 
-    // Clean up Web Audio and Remote Audio
     if (remoteAudioRef.current) {
       remoteAudioRef.current.pause();
       remoteAudioRef.current.srcObject = null;
       remoteAudioRef.current = null;
     }
-    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
+
     setAnalyser(null);
     setIsAssistantSpeaking(false);
 
-    // Notify bot to finalize session and report to Cloudflare Worker
     if (currentCallId) {
       const botUrl = (import.meta.env.VITE_BOT_URL || 'http://localhost:8765').replace(/\/+$/, '');
       try {
         await fetch(`${botUrl}/hangup/${currentCallId}`, { method: 'POST' });
-      } catch (err) {
-        // Benign notice if bot is offline
-      }
+      } catch (_) {}
     }
 
     setCallState('reported');
 
-    // ONLY automatically navigate to CallDetailPage if the call actually connected and had duration
-    // This prevents 404 fetch loops for calls that failed to connect
     if (wasLiveCall && currentCallId && onCallReported) {
       onCallReported(currentCallId);
     }
@@ -166,59 +129,42 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       setIsAssistantSpeaking(false);
 
       const botUrl = (import.meta.env.VITE_BOT_URL || 'http://localhost:8765').replace(/\/+$/, '');
-
-      // 1. Request microphone permission and attach real Web Audio AnalyserNode
-      const userMediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new AudioCtxClass();
-      audioCtxRef.current = audioCtx;
-      const source = audioCtx.createMediaStreamSource(userMediaStream);
-      const analyserNode = audioCtx.createAnalyser();
-      analyserNode.fftSize = 64;
-      source.connect(analyserNode);
-      setAnalyser(analyserNode);
-
-      setCallState('connecting');
-
-      // 2. Instantiate SmallWebRTCTransport connecting to the local Pipecat bot
       const newCallId = crypto.randomUUID();
+
       setCallId(newCallId);
       callIdRef.current = newCallId;
+      setCallState('connecting');
 
       const transport = new SmallWebRTCTransport({
         webrtcRequestParams: {
           endpoint: `${botUrl}/offer`,
-          requestData: {
-            call_id: newCallId,
-          },
+          requestData: { call_id: newCallId },
         },
       });
 
-      // 3. Helper to append turns safely
       const appendTurn = (role: 'user' | 'assistant', text: string) => {
         const trimmed = text.trim();
         if (!trimmed) return;
+
         const elapsed = startTimeRef.current ? Date.now() - startTimeRef.current : 0;
         setTranscript((prev) => {
+          const last = prev[prev.length - 1];
+
+          // Pipecat can deliver the same RTVI transcript through more than one
+          // callback/event surface. De-duplicate exact repeats while preserving
+          // legitimate consecutive turns.
           if (
-            prev.length > 0 &&
-            prev[prev.length - 1].role === role &&
-            prev[prev.length - 1].text.toLowerCase() === trimmed.toLowerCase()
+            last &&
+            last.role === role &&
+            last.text.trim().toLowerCase() === trimmed.toLowerCase()
           ) {
             return prev;
           }
+
           return [...prev, { role, text: trimmed, ts_ms: elapsed }];
         });
       };
 
-      // 4. Instantiate PipecatClient with comprehensive callbacks for RTVI events
       const client = new PipecatClient({
         transport,
         enableMic: true,
@@ -241,28 +187,28 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           },
           onMetrics: (data: any) => {
             if (!data) return;
-            const newMetrics: TurnMetrics = {};
+            const next: TurnMetrics = {};
             if (Array.isArray(data.ttfb)) {
               for (const item of data.ttfb) {
-                const val = Math.round(item.value * 1000);
-                if (item.processor?.includes('stt') || item.processor?.includes('deepgram')) {
-                  newMetrics.stt_ms = val;
-                } else if (item.processor?.includes('llm') || item.processor?.includes('groq')) {
-                  newMetrics.llm_ttfb_ms = val;
-                } else if (item.processor?.includes('tts') || item.processor?.includes('cartesia')) {
-                  newMetrics.tts_ttfb_ms = val;
+                const val = Math.round(Number(item.value) * 1000);
+                const processor = String(item.processor || '').toLowerCase();
+                if (processor.includes('stt') || processor.includes('deepgram')) {
+                  next.stt_ms = val;
+                } else if (processor.includes('llm') || processor.includes('groq')) {
+                  next.llm_ttfb_ms = val;
+                } else if (processor.includes('tts') || processor.includes('cartesia')) {
+                  next.tts_ttfb_ms = val;
                 }
               }
             }
-            if (Object.keys(newMetrics).length > 0) {
-              setLatestMetrics((prev) => ({ ...prev, ...newMetrics }));
+            if (Object.keys(next).length) {
+              setLatestMetrics((prev) => ({ ...(prev || {}), ...next }));
             }
           },
         },
       });
       clientRef.current = client;
 
-      // 5. Wire RTVI Event listeners
       client.on(RTVIEvent.TransportStateChanged, (state: TransportState) => {
         if (state === 'connected' || state === 'ready') {
           setCallState('live');
@@ -270,86 +216,64 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
         } else if (state === 'disconnected') {
           setCallState((prev) => (prev === 'live' ? 'ending' : prev));
         } else if (state === 'error') {
-          console.warn('Pipecat transport state: error');
+          setErrorMessage('Pipecat transport reported an error. Check the bot terminal for the underlying service error.');
         }
       });
 
       client.on(RTVIEvent.BotReady, () => {
         setCallState('live');
-        startTimeRef.current = Date.now();
+        if (!startTimeRef.current) startTimeRef.current = Date.now();
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = window.setInterval(() => {
           setDurationSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
         }, 1000);
       });
 
-      client.on(RTVIEvent.BotStartedSpeaking, () => {
-        setIsAssistantSpeaking(true);
-      });
-
-      client.on(RTVIEvent.BotStoppedSpeaking, () => {
-        setIsAssistantSpeaking(false);
-      });
+      client.on(RTVIEvent.BotStartedSpeaking, () => setIsAssistantSpeaking(true));
+      client.on(RTVIEvent.BotStoppedSpeaking, () => setIsAssistantSpeaking(false));
 
       client.on(RTVIEvent.UserStartedSpeaking, () => {
         if (isAssistantSpeakingRef.current) {
           setTranscript((prev) => {
-            if (prev.length === 0) return prev;
+            const last = prev[prev.length - 1];
+            if (!last || last.role !== 'assistant') return prev;
             const updated = [...prev];
-            const lastIdx = updated.length - 1;
-            if (updated[lastIdx].role === 'assistant') {
-              updated[lastIdx] = { ...updated[lastIdx], interrupted: true };
-            }
+            updated[updated.length - 1] = { ...last, interrupted: true };
             return updated;
           });
         }
       });
 
-      client.on(RTVIEvent.UserTranscript, (data: any) => {
-        if (data?.final) {
-          appendTurn('user', data.text || '');
-          setInterimTranscript('');
-        } else if (data?.text) {
-          setInterimTranscript(data.text);
-        }
-      });
+      // IMPORTANT: Do not also register UserTranscript/BotTranscript/BotOutput
+      // event listeners here. The client callbacks above receive the same RTVI
+      // transcript events; registering both caused every answer to appear twice.
 
-      client.on(RTVIEvent.BotTranscript, (data: any) => {
-        appendTurn('assistant', data?.text || '');
-      });
-
-      client.on(RTVIEvent.BotOutput, (data: any) => {
-        appendTurn('assistant', data?.text || '');
-      });
-
-      // Remote audio playback from Pipecat WebRTC
       client.on(RTVIEvent.TrackStarted, (track: MediaStreamTrack) => {
-        if (track.kind === 'audio') {
-          let audioEl = remoteAudioRef.current;
-          if (!audioEl) {
-            audioEl = new Audio();
-            audioEl.autoplay = true;
-            remoteAudioRef.current = audioEl;
-          }
-          audioEl.srcObject = new MediaStream([track]);
-          audioEl.play().catch((playErr) => {
-            console.warn('Remote audio playback notice:', playErr);
-          });
+        if (track.kind !== 'audio') return;
+        let audioEl = remoteAudioRef.current;
+        if (!audioEl) {
+          audioEl = new Audio();
+          audioEl.autoplay = true;
+          audioEl.playsInline = true;
+          remoteAudioRef.current = audioEl;
         }
+        audioEl.srcObject = new MediaStream([track]);
+        audioEl.play().catch(() => {});
       });
 
       client.on(RTVIEvent.Error, (message: any) => {
         console.warn('Pipecat RTVI notice:', message);
       });
 
-      // 6. Initialize media devices & connect
+      // PipecatClient owns the real microphone track. Do not open a second
+      // getUserMedia() stream here: a second capture path can make debugging
+      // echo/VAD behavior much harder and is not the audio sent to Pipecat.
       await client.initDevices();
+      await client.enableMic(true);
       await client.connect();
-
     } catch (err: any) {
       console.warn('Voice call connection notice:', err?.message || err);
 
-      // Clean up client gracefully without throwing unhandled exceptions
       if (clientRef.current) {
         try {
           await clientRef.current.disconnect();
@@ -358,14 +282,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       }
 
       const botUrl = (import.meta.env.VITE_BOT_URL || 'http://localhost:8765').replace(/\/+$/, '');
+      setCallState('error');
 
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-          audioCtxRef.current.close().catch(() => {});
-          audioCtxRef.current = null;
-        }
-        setAnalyser(null);
-        setCallState('error');
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
         setErrorMessage('Microphone access denied. Please grant microphone permission in your browser.');
       } else {
         setErrorMessage(err?.message || `Pipecat WebRTC signaling server at ${botUrl} is not reachable.`);
@@ -376,13 +295,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const toggleMute = useCallback(() => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
-
-    if (clientRef.current) {
-      try {
-        clientRef.current.enableMic(!nextMuted);
-      } catch (_) {}
-    }
-
+    try {
+      clientRef.current?.enableMic(!nextMuted);
+    } catch (_) {}
   }, [isMuted]);
 
   const sendTurnText = useCallback(async (text: string) => {
@@ -392,12 +307,10 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     setTranscript((prev) => [...prev, { role: 'user', text: trimmed, ts_ms: elapsed }]);
     setInterimTranscript('');
 
-    if (clientRef.current) {
-      try {
-        await clientRef.current.sendText(trimmed);
-      } catch (err: any) {
-        console.warn('Failed to send text to Pipecat bot:', err);
-      }
+    try {
+      await clientRef.current?.sendText(trimmed);
+    } catch (err: any) {
+      console.warn('Failed to send text to Pipecat bot:', err);
     }
   }, []);
 
