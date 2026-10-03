@@ -61,7 +61,21 @@ class TranscriptCollector:
         if self._current_assistant_turn is None:
             self.start_assistant_turn()
         current = self._current_assistant_turn
-        current["text"] += chunk if not current["text"] else (" " + chunk)
+        existing = str(current["text"]).strip()
+        incoming = chunk.strip()
+
+        # LLM streaming providers can emit an accumulated sentence more than
+        # once. Never append an identical or already-contained chunk.
+        if existing:
+            existing_norm = " ".join(existing.lower().split())
+            incoming_norm = " ".join(incoming.lower().split())
+            if incoming_norm == existing_norm or incoming_norm in existing_norm:
+                return
+            if existing_norm in incoming_norm:
+                current["text"] = incoming
+                return
+
+        current["text"] += incoming if not existing else (" " + incoming)
 
     def mark_interrupted(self) -> None:
         if self._current_assistant_turn is not None:
