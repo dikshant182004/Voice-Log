@@ -111,5 +111,38 @@ class TestReporterSpooling(unittest.TestCase):
     self.assertTrue(result)
 
 
+class TestWebRTCSDPNegotiation(unittest.TestCase):
+  def test_multitrack_m_line_order_matching(self):
+    """
+    RFC 3264 requirement:
+    The order and count of m-lines in answer must match the offer exactly.
+    SmallWebRTCTransport in Chrome offers both m=audio and m=application (DataChannel).
+    """
+    from bot.sdp import generate_sdp_answer
+
+    offer_sdp = (
+      "v=0\r\n"
+      "o=- 7150183141577785501 2 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "a=group:BUNDLE 0 1\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111 63 9\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=mid:0\r\n"
+      "m=application 9 UDP/DTLS/SCTP webrtc-datachannel 5000\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=mid:1\r\n"
+    )
+
+    answer_sdp = generate_sdp_answer(offer_sdp)
+    m_lines = [line for line in answer_sdp.splitlines() if line.startswith("m=")]
+    self.assertEqual(len(m_lines), 2)
+    self.assertTrue(m_lines[0].startswith("m=audio"))
+    self.assertTrue(m_lines[1].startswith("m=application"))
+    self.assertIn("a=mid:0", answer_sdp)
+    self.assertIn("a=mid:1", answer_sdp)
+    self.assertIn("a=group:BUNDLE 0 1", answer_sdp)
+
+
 if __name__ == "__main__":
   unittest.main(verbosity=2)

@@ -348,6 +348,13 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       console.error('Call initialization failure:', err);
       setCallState('error');
 
+      if (clientRef.current) {
+        try {
+          await clientRef.current.disconnect();
+        } catch (_) {}
+        clientRef.current = null;
+      }
+
       if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
         audioCtxRef.current.close().catch(() => {});
         audioCtxRef.current = null;
@@ -357,6 +364,8 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       const botUrl = (import.meta.env.VITE_BOT_URL || 'http://localhost:8765').replace(/\/+$/, '');
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setErrorMessage('Microphone access denied. Please grant microphone permission in your browser.');
+      } else if (err.message && !err.message.includes('[object Object]')) {
+        setErrorMessage(`Call connection error: ${err.message}. Please verify the Python bot is running at ${botUrl}.`);
       } else {
         setErrorMessage(
           `Unable to connect to Pipecat voice bot at ${botUrl}. Please verify the Python bot is running with "python3 -m bot.bot" and that your Deepgram, Groq, and Cartesia API keys are configured in .env.`

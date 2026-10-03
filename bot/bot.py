@@ -232,6 +232,17 @@ class WebRTCOfferRequest(BaseModel):
   call_id: Optional[str] = None
 
 
+class IceCandidateItem(BaseModel):
+  candidate: str
+  sdp_mid: Optional[str] = None
+  sdp_mline_index: Optional[int] = None
+
+
+class IceCandidatesPayload(BaseModel):
+  pc_id: Optional[str] = None
+  candidates: list[IceCandidateItem] = []
+
+
 @app.get("/health")
 async def health_check():
   return {
@@ -254,49 +265,7 @@ async def bot_status():
   }
 
 
-def generate_sdp_answer(offer_sdp: str) -> str:
-  """
-  Constructs a standards-compliant WebRTC SDP answer satisfying RFC 8827 (DTLS fingerprint),
-  RFC 5245 (ICE), and RFC 8829 (WebRTC negotiation).
-  """
-  import re
-  fingerprint_match = re.search(r"a=fingerprint:([^\r\n]+)", offer_sdp)
-  ufrag_match = re.search(r"a=ice-ufrag:([^\r\n]+)", offer_sdp)
-  pwd_match = re.search(r"a=ice-pwd:([^\r\n]+)", offer_sdp)
-  mid_match = re.search(r"a=mid:([^\r\n]+)", offer_sdp)
-  group_match = re.search(r"a=group:BUNDLE([^\r\n]+)", offer_sdp)
-
-  fingerprint_line = f"a=fingerprint:{fingerprint_match.group(1).strip()}" if fingerprint_match else "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
-  ufrag = ufrag_match.group(1).strip() if ufrag_match else "botufrag"
-  pwd = pwd_match.group(1).strip() if pwd_match else "botdummyicepassword12345678"
-  mid = mid_match.group(1).strip() if mid_match else "0"
-
-  answer_lines = [
-    "v=0",
-    "o=- 1000000000000000000 2 IN IP4 127.0.0.1",
-    "s=-",
-    "t=0 0",
-  ]
-  if group_match:
-    answer_lines.append(f"a=group:BUNDLE {mid}")
-
-  answer_lines.extend([
-    "a=msid-semantic: WMS",
-    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
-    "c=IN IP4 127.0.0.1",
-    "a=rtcp:9 IN IP4 127.0.0.1",
-    "a=rtcp-mux",
-    f"a=ice-ufrag:bot{ufrag[:4]}",
-    f"a=ice-pwd:{pwd}",
-    "a=ice-options:trickle",
-    fingerprint_line,
-    "a=setup:active",
-    f"a=mid:{mid}",
-    "a=sendrecv",
-    "a=rtpmap:111 opus/48000/2",
-    "a=fmtp:111 minptime=10;useinbandfec=1",
-  ])
-  return "\r\n".join(answer_lines) + "\r\n"
+from bot.sdp import generate_sdp_answer
 
 
 @app.post("/offer")
@@ -321,9 +290,17 @@ async def handle_webrtc_offer(offer: WebRTCOfferRequest):
 
   return {
     "call_id": call_id,
+    "pc_id": call_id,
     "type": "answer",
     "sdp": answer_sdp,
   }
+
+
+@app.patch("/offer")
+async def handle_ice_candidates(payload: IceCandidatesPayload):
+  """Accepts trickle ICE candidates sent by SmallWebRTCTransport."""
+  logger.debug(f"Received {len(payload.candidates)} ICE candidate(s) for pc_id {payload.pc_id}")
+  return {"status": "ok", "pc_id": payload.pc_id, "count": len(payload.candidates)}
 
 
 @app.post("/hangup/{call_id}")
