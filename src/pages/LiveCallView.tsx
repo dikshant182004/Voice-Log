@@ -117,7 +117,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         {(isLive || interimTranscript) && (
           <div className="space-y-2">
             <div className="flex items-center justify-center gap-2 text-xs text-neutral-500">
-              <Activity className={`w-3.5 h-3.5 ${isSpeechRecognitionActive && !isMuted ? 'text-emerald-500 animate-pulse' : 'text-neutral-400'}`} />
+              <Activity className={`w-3.5 h-3.5 ${isMuted ? 'text-neutral-400' : 'text-emerald-500 animate-pulse'}`} />
               <span>
                 {isMuted ? 'Microphone muted' : isAssistantSpeaking ? 'Assistant speaking...' : 'Pipecat voice pipeline active'}
               </span>
