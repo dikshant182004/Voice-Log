@@ -6,7 +6,6 @@ CREATE TABLE IF NOT EXISTS call_evals (
   scores_json TEXT NOT NULL,
   summary TEXT,
   sentiment TEXT,
-  flags_json TEXT,
   judge_model TEXT,
   created_at TEXT NOT NULL
 );

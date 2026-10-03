@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Award, AlertCircle, RefreshCw, Clock, Cloud, CloudOff, CheckCircle2, AlertTriangle, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Award, AlertCircle, RefreshCw, Clock, Cloud, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { CallDetailResponse } from '../types';
 import { apiClient, HttpError, NetworkError, ConfigurationError } from '../api/client';
 import { LatencyLineChart } from '../components/LatencyLineChart';
@@ -12,8 +12,6 @@ interface CallDetailPageProps {
 export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }) => {
   const [data, setData] = useState<CallDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -58,24 +56,6 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
       }
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleManualSync = async () => {
-    try {
-      setIsSyncing(true);
-      setSyncStatus('Syncing to Cloudflare Worker...');
-      const success = await apiClient.syncPendingCall(callId);
-      if (success) {
-        setSyncStatus('Successfully synced to Cloudflare D1!');
-        await fetchDetail();
-      } else {
-        setSyncStatus('Cloudflare sync failed. Ensure local worker is running on port 8787.');
-      }
-    } catch (e: any) {
-      setSyncStatus(`Sync error: ${e.message || 'Worker unreachable'}`);
-    } finally {
-      setIsSyncing(false);
     }
   };
 
@@ -153,36 +133,10 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
 
   return (
     <div className="space-y-8">
-      {/* Cloudflare Sync Status Alert Banner */}
-      {call.isLocalPendingSync ? (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
-          <div className="flex items-start gap-2.5">
-            <CloudOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold block">Stored in Local Session (Pending Cloudflare D1 Sync)</span>
-              <p className="text-amber-700 mt-0.5">
-                {call.syncError
-                  ? `Cloudflare Worker responded: ${call.syncError}. Showing call data from local buffer.`
-                  : 'Call data is secured locally. Ensure Cloudflare Worker is running on port 8787 to commit to D1.'}
-              </p>
-              {syncStatus && <p className="text-amber-800 font-mono mt-1 font-semibold">{syncStatus}</p>}
-            </div>
-          </div>
-          <button
-            onClick={handleManualSync}
-            disabled={isSyncing}
-            className="px-3.5 py-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white rounded-xl font-medium shrink-0 flex items-center gap-1.5 transition-colors self-start sm:self-auto"
-          >
-            <UploadCloud className={`w-3.5 h-3.5 ${isSyncing ? 'animate-bounce' : ''}`} />
-            <span>{isSyncing ? 'Syncing...' : 'Sync to Cloudflare'}</span>
-          </button>
-        </div>
-      ) : (
-        <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200/80 rounded-xl inline-flex items-center gap-1.5 text-xs text-emerald-800 font-medium">
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Verified & Persisted in Cloudflare D1</span>
-        </div>
-      )}
+      <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200/80 rounded-xl inline-flex items-center gap-1.5 text-xs text-emerald-800 font-medium">
+        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+        <span>Verified & Persisted in Cloudflare D1</span>
+      </div>
 
       {/* Back button & Title header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-neutral-200">

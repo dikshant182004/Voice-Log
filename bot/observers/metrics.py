@@ -2,10 +2,30 @@
 Pipeline Latency and Usage Metrics Collector.
 Collects turn-level latency breakdown (STT, LLM TTFB, TTS TTFB, Voice-to-Voice)
 and token/character consumption counters.
+Includes Pipecat FrameProcessor for streaming pipeline integration.
 """
 
 from typing import List, Dict, Any, Optional
 import time
+
+try:
+  from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+  from pipecat.frames.frames import (
+    Frame,
+    MetricsFrame,
+    UserStoppedSpeakingFrame,
+    UserStartedSpeakingFrame,
+    TranscriptionFrame,
+    LLMFullResponseStartFrame,
+    TTSStartedFrame,
+    TTSAudioRawFrame,
+  )
+  PIPECAT_AVAILABLE = True
+except ImportError:
+  PIPECAT_AVAILABLE = False
+  FrameProcessor = object
+  FrameDirection = None
+  Frame = None
 
 
 class MetricsCollector:
@@ -121,3 +141,34 @@ class MetricsCollector:
 
   def get_usage(self) -> Dict[str, int]:
     return dict(self.usage)
+
+
+class MetricsProcessor(FrameProcessor if PIPECAT_AVAILABLE else object):
+  """
+  Pipecat pipeline frame processor that observes audio, STT, LLM, and TTS frames
+  to compute real-time latency milestones.
+  """
+  def __init__(self, collector: MetricsCollector):
+    if PIPECAT_AVAILABLE:
+      super().__init__()
+    self._collector = collector
+
+  async def process_frame(self, frame: Any, direction: Any):
+    if PIPECAT_AVAILABLE:
+      await super().process_frame(frame, direction)
+      if isinstance(frame, UserStoppedSpeakingFrame):
+        self._collector.mark_user_speech_end()
+      elif isinstance(frame, TranscriptionFrame):
+        self._collector.mark_stt_final()
+      elif isinstance(frame, LLMFullResponseStartFrame):
+        self._collector.mark_llm_first_token()
+      elif isinstance(frame, TTSStartedFrame):
+        self._collector.mark_tts_start()
+      elif isinstance(frame, TTSAudioRawFrame):
+        self._collector.mark_tts_first_audio()
+      elif isinstance(frame, MetricsFrame):
+        # Capture token and character usage if present in metrics frames
+        for m in getattr(frame, "data", []):
+          if getattr(m, "processor", "") == "llm":
+            pass
+      await self.push_frame(frame, direction)

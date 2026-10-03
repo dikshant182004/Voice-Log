@@ -10,8 +10,8 @@ from typing import Any, Tuple
 
 from bot.config import BotSettings
 from bot.prompts import VOICE_SYSTEM_PROMPT
-from bot.observers.transcript import TranscriptCollector
-from bot.observers.metrics import MetricsCollector
+from bot.observers.transcript import TranscriptCollector, TranscriptProcessor
+from bot.observers.metrics import MetricsCollector, MetricsProcessor
 
 logger = logging.getLogger("bot.pipeline")
 
@@ -133,10 +133,15 @@ def create_pipeline(
   else:
     raise ValueError(f"No valid API key found for TTS provider: {settings.tts_provider}")
 
+  transcript_proc = TranscriptProcessor(transcript_collector)
+  metrics_proc = MetricsProcessor(metrics_collector)
+
   # Build pipeline
   pipeline = Pipeline([
     transport.input(),
     stt,
+    transcript_proc,
+    metrics_proc,
     context_aggregator.user(),
     llm,
     tts,

@@ -15,7 +15,6 @@
     "test:evals": "python3 evals/run_evals.py --gate"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@pipecat-ai/client-js": "1.13.1",
     "@pipecat-ai/small-webrtc-transport": "1.10.8",
     "@tailwindcss/vite": "^4.3.3",

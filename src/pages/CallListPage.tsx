@@ -231,11 +231,6 @@ export const CallListPage: React.FC<CallListPageProps> = ({ onSelectCall, onStar
                 <div className="space-y-1.5 min-w-0">
                   <div className="flex items-center gap-2 text-xs text-neutral-500">
                     <span className="font-mono text-neutral-800 font-medium">{call.id.slice(0, 8)}...{call.id.slice(-4)}</span>
-                    {call.isLocalPendingSync && (
-                      <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-medium rounded">
-                        Pending Sync
-                      </span>
-                    )}
                     <span aria-hidden="true">·</span>
                     <span className="tabular-nums">{formatDate(call.started_at)}</span>
                     <span aria-hidden="true">·</span>

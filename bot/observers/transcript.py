@@ -1,10 +1,27 @@
 """
 In-memory transcript collector and turn manager.
 Tracks user and assistant turns with millisecond offsets and interruption detection.
+Includes Pipecat FrameProcessor for streaming pipeline integration.
 """
 
 from typing import List, Dict, Any, Optional
 import time
+
+try:
+  from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+  from pipecat.frames.frames import (
+    Frame,
+    TranscriptionFrame,
+    InterimTranscriptionFrame,
+    TextFrame,
+    InterruptionFrame,
+  )
+  PIPECAT_AVAILABLE = True
+except ImportError:
+  PIPECAT_AVAILABLE = False
+  FrameProcessor = object
+  FrameDirection = None
+  Frame = None
 
 
 class TranscriptCollector:
@@ -92,3 +109,29 @@ class TranscriptCollector:
 
   def get_turns(self) -> List[Dict[str, Any]]:
     return list(self.turns)
+
+
+class TranscriptProcessor(FrameProcessor if PIPECAT_AVAILABLE else object):
+  """
+  Pipecat pipeline frame processor that observes real-time speech events
+  and populates the TranscriptCollector.
+  """
+  def __init__(self, collector: TranscriptCollector):
+    if PIPECAT_AVAILABLE:
+      super().__init__()
+    self._collector = collector
+
+  async def process_frame(self, frame: Any, direction: Any):
+    if PIPECAT_AVAILABLE:
+      await super().process_frame(frame, direction)
+      if isinstance(frame, TranscriptionFrame):
+        text = getattr(frame, "text", "")
+        if text:
+          self._collector.add_user_turn(text)
+      elif isinstance(frame, TextFrame):
+        text = getattr(frame, "text", "")
+        if text:
+          self._collector.append_assistant_chunk(text)
+      elif isinstance(frame, InterruptionFrame):
+        self._collector.mark_interrupted()
+      await self.push_frame(frame, direction)

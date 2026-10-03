@@ -66,7 +66,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         <div>
           <span>Signaling target: <code className="font-mono text-neutral-800">{botUrl}</code>.</span>
           <span className="block text-neutral-500 mt-0.5">
-            If running locally, start the bot with <code className="font-mono">python3 -m bot.bot</code>. Even if offline, browser speech recognition and local conversational responses continue seamlessly.
+            Voice pipeline runs locally with Pipecat, Deepgram STT, Groq LLM, and Cartesia TTS. Start the bot with <code className="font-mono">python3 -m bot.bot</code>.
           </span>
         </div>
       </div>
