@@ -192,7 +192,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
               setInterimTranscript(data.text);
             }
           },
-          onBotTranscript: (data: any) => {
+          onBotOutput: (data: any) => {
             const text = String(data?.text || '').trim();
             if (!text) return;
             setTranscript((prev) => {
