@@ -65,7 +65,8 @@ def create_pipeline(
         settings=GroqLLMService.Settings(
             model=settings.llm_model,
             temperature=0.2,
-            max_tokens=150,
+            max_tokens=settings.llm_max_completion_tokens,
+            reasoning_effort=settings.llm_reasoning_effort,
             system_instruction=VOICE_SYSTEM_PROMPT,
         ),
     )
