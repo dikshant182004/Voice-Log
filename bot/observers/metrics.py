@@ -7,6 +7,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     MetricsFrame,
     TextFrame,
+    TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStartedFrame,
     UserStoppedSpeakingFrame,
