@@ -33,6 +33,7 @@ class BotSettings(BaseSettings):
 
     vad_stop_secs: float = Field(default=0.30)
     endpointing_ms: int = Field(default=200)
+    smart_turn_stop_secs: float = Field(default=1.0)
 
     max_call_seconds: int = Field(default=600)
     idle_timeout_seconds: int = Field(default=60)
