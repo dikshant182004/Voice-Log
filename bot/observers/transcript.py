@@ -6,7 +6,12 @@ from typing import Any, Dict, List, Optional
 import time
 
 try:
-    from pipecat.frames.frames import InterruptionFrame, TextFrame, TranscriptionFrame
+    from pipecat.frames.frames import (
+        InterruptionFrame,
+        InterimTranscriptionFrame,
+        TextFrame,
+        TranscriptionFrame,
+    )
     from pipecat.processors.frame_processor import FrameProcessor
     PIPECAT_AVAILABLE = True
 except ImportError:
@@ -79,7 +84,11 @@ class TranscriptProcessor(FrameProcessor if PIPECAT_AVAILABLE else object):
     async def process_frame(self, frame: Any, direction: Any):
         if PIPECAT_AVAILABLE:
             await super().process_frame(frame, direction)
-            if isinstance(frame, TranscriptionFrame):
+            if isinstance(frame, InterimTranscriptionFrame):
+                # Interim Deepgram results are UI-only and must never become
+                # persisted transcript turns.
+                pass
+            elif isinstance(frame, TranscriptionFrame):
                 self._collector.add_user_turn(getattr(frame, "text", ""))
             elif isinstance(frame, InterruptionFrame):
                 self._collector.mark_interrupted()
