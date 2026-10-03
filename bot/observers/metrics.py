@@ -33,8 +33,11 @@ class MetricsCollector:
         self._llm_first_token_ts: Optional[float] = None
         self._tts_start_ts: Optional[float] = None
         self._tts_first_audio_ts: Optional[float] = None
+        self._current_turn_index: Optional[int] = None
 
-    def mark_user_speech_end(self, ts=None): self._user_speech_end_ts = ts or time.time()
+    def mark_user_speech_end(self, ts=None):
+        self._user_speech_end_ts = ts or time.time()
+        self._current_turn_index = len(self.turn_metrics) * 2 + 1
     def mark_stt_final(self, ts=None): self._stt_final_ts = ts or time.time()
     def mark_llm_start(self, ts=None): self._llm_start_ts = ts or time.time()
     def mark_llm_first_token(self, ts=None):
@@ -62,6 +65,7 @@ class MetricsCollector:
         self.turn_metrics.append(record)
         self._user_speech_end_ts = self._stt_final_ts = self._llm_start_ts = None
         self._llm_first_token_ts = self._tts_start_ts = self._tts_first_audio_ts = None
+        self._current_turn_index = None
         return record
 
     def get_metrics(self): return list(self.turn_metrics)
@@ -88,6 +92,8 @@ class MetricsProcessor(FrameProcessor if PIPECAT_AVAILABLE else object):
                 self._collector.mark_tts_start()
             elif isinstance(frame, TTSAudioRawFrame):
                 self._collector.mark_tts_first_audio()
+                if self._collector._current_turn_index is not None:
+                    self._collector.finalize_turn_metrics(self._collector._current_turn_index)
             elif isinstance(frame, MetricsFrame):
                 for metric in getattr(frame, "data", []):
                     if "llm" in str(getattr(metric, "processor", "")).lower():
