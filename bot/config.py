@@ -20,6 +20,12 @@ class BotSettings(BaseSettings):
 
     stt_model: str = Field(default="nova-3-general")
     llm_model: str = Field(default="openai/gpt-oss-20b")
+    # GPT-OSS is a reasoning model; keep reasoning deliberately low for live voice.
+    llm_reasoning_effort: str = Field(default="low")
+    # Completion budget includes reasoning tokens, so 150 was too restrictive in testing.
+    llm_max_completion_tokens: int = Field(default=320)
+    # Keep a bounded conversational window to prevent latency growth over long calls.
+    context_max_messages: int = Field(default=10)
     tts_provider: str = Field(default="cartesia")
     tts_model: str = Field(default="sonic-3.6")
     tts_voice_id: str = Field(default="79a125e8-cd45-4c13-8a67-188112f4dd22")
@@ -32,7 +38,7 @@ class BotSettings(BaseSettings):
     # Turn detection tuning. VAD defines the speech boundary; the speech
     # timeout gives the STT stream a short grace period to produce its final
     # transcript before the LLM turn is submitted.
-    vad_stop_secs: float = Field(default=0.35)
+    vad_stop_secs: float = Field(default=0.25)
     user_speech_timeout: float = Field(default=0.55)
     user_turn_stop_timeout: float = Field(default=4.0)
     endpointing_ms: int = Field(default=250)
