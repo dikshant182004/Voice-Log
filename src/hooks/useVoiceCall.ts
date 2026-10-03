@@ -94,7 +94,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
         remoteAudioRef.current = null;
       }
     };
-  }, [stopSpeechRecognition]);
+  }, []);
 
   const endCall = useCallback(async () => {
     if (callState === 'idle' || callState === 'ending' || callState === 'reported') {
@@ -104,7 +104,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     const wasLiveCall = callState === 'live' && durationSeconds > 0;
     setCallState('ending');
     setInterimTranscript('');
-    stopSpeechRecognition();
 
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -153,7 +152,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     if (wasLiveCall && currentCallId && onCallReported) {
       onCallReported(currentCallId);
     }
-  }, [callState, durationSeconds, onCallReported, stopSpeechRecognition]);
+  }, [callState, durationSeconds, onCallReported]);
 
   const startCall = useCallback(async () => {
     try {
