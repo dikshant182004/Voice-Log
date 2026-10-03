@@ -274,6 +274,7 @@ async def _run_session(
         session.runner = WorkerRunner(
             handle_sigint=False,
             handle_sigterm=False,
+            auto_end=False,
         )
         await session.runner.add_workers(worker)
 
