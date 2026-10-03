@@ -292,9 +292,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           requestData: { call_id: newCallId },
         },
       });
-      // Verify that the same microphone track used by WebRTC is live.
-      const micTrack = client.getLocalAudioTrack?.();
-      console.info('[Pipecat] local mic track:', micTrack?.enabled, micTrack?.readyState);
     } catch (err: any) {
       console.warn('Voice call connection notice:', err?.message || err);
 
