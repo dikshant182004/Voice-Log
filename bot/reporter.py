@@ -18,7 +18,7 @@ import os
 import random
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional, Set, List
+from typing import Dict, Any, Optional, Set, List, Literal
 
 try:
   from pydantic import BaseModel, Field
@@ -78,8 +78,8 @@ class IngestCallPayloadModel(BaseModel):
   started_at: str
   ended_at: str
   duration_ms: int = Field(ge=0)
-  status: str
-  end_reason: Optional[str] = None
+  status: Literal["completed", "disconnected", "error"]
+  end_reason: Optional[Literal["user_hangup", "client_disconnect", "error", "timeout"]] = None
   config: CallConfigModel = Field(default_factory=CallConfigModel)
   transcript: List[TranscriptTurnModel] = Field(default_factory=list)
   metrics: List[TurnMetricModel] = Field(default_factory=list)
