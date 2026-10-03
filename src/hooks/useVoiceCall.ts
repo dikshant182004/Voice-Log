@@ -159,6 +159,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       setErrorMessage(null);
       setCallState('requesting_mic');
       setDurationSeconds(0);
+      startTimeRef.current = 0;
       setTranscript([]);
       setInterimTranscript('');
       setLatestMetrics(null);
