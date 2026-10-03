@@ -113,12 +113,9 @@ class CallReporter:
 
   async def finalize_and_report(self, payload: Dict[str, Any]) -> bool:
     """Finalizes once and reports the payload. If already finalized, returns True without duplicate send."""
-    if self._finalized:
-      return True
     call_id = payload.get("call_id", "unknown")
     if not await self.finalize_call(call_id):
       return True
-    self._finalized = True
     return await self.report_call(payload)
 
   def validate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
