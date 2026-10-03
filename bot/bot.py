@@ -266,7 +266,9 @@ async def _run_session(
                 audio_out_enabled=True,
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=settings.tts_sample_rate,
-                audio_in_passthrough=False,
+                # SmallWebRTCTransport must pass captured PCM frames downstream to Deepgram.
+                # False would keep the transport connected while starving the STT processor.
+                audio_in_passthrough=True,
             ),
         )
 
