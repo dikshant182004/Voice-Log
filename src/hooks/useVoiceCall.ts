@@ -135,12 +135,10 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       callIdRef.current = newCallId;
       setCallState('connecting');
 
-      const transport = new SmallWebRTCTransport({
-        webrtcRequestParams: {
-          endpoint: `${botUrl}/offer`,
-          requestData: { call_id: newCallId },
-        },
-      });
+      // Keep the transport on Pipecat's standard SmallWebRTC flow. The
+      // request is supplied to connect(), while initDevices() owns the real
+      // browser microphone track.
+      const transport = new SmallWebRTCTransport();
 
       const appendTurn = (role: 'user' | 'assistant', text: string) => {
         const trimmed = text.trim();
@@ -245,6 +243,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       client.on(RTVIEvent.BotStoppedSpeaking, () => setIsAssistantSpeaking(false));
 
       client.on(RTVIEvent.UserStartedSpeaking, () => {
+        console.info('[Pipecat] VAD: user started speaking');
         if (isAssistantSpeakingRef.current) {
           setTranscript((prev) => {
             const last = prev[prev.length - 1];
@@ -254,6 +253,10 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
             return updated;
           });
         }
+      });
+
+      client.on(RTVIEvent.UserStoppedSpeaking, () => {
+        console.info('[Pipecat] VAD: user stopped speaking');
       });
 
       // IMPORTANT: Do not also register UserTranscript/BotTranscript/BotOutput
@@ -282,12 +285,16 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       // getUserMedia() stream here: a second capture path can make debugging
       // echo/VAD behavior much harder and is not the audio sent to Pipecat.
       await client.initDevices();
+      console.info('[Pipecat] microphone enabled:', client.isMicEnabled);
       await client.connect({
         webrtcRequestParams: {
-          endpoint: botUrl + '/offer',
+          endpoint: `${botUrl}/offer`,
           requestData: { call_id: newCallId },
         },
       });
+      // Verify that the same microphone track used by WebRTC is live.
+      const micTrack = client.getLocalAudioTrack?.();
+      console.info('[Pipecat] local mic track:', micTrack?.enabled, micTrack?.readyState);
     } catch (err: any) {
       console.warn('Voice call connection notice:', err?.message || err);
 
