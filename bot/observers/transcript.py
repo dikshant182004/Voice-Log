@@ -30,6 +30,25 @@ class TranscriptCollector:
     self.turns.append(turn)
     return turn
 
+  def add_assistant_turn(
+    self,
+    text: str,
+    ts_ms: Optional[int] = None,
+    interrupted: bool = False,
+  ) -> Dict[str, Any]:
+    """Directly records a completed assistant utterance turn."""
+    if ts_ms is None:
+      ts_ms = self.get_elapsed_ms()
+    turn = {
+      "turn_index": len(self.turns),
+      "role": "assistant",
+      "text": text.strip(),
+      "ts_ms": max(0, ts_ms),
+      "interrupted": interrupted,
+    }
+    self.turns.append(turn)
+    return turn
+
   def start_assistant_turn(self, ts_ms: Optional[int] = None) -> Dict[str, Any]:
     """Begins accumulating a new assistant turn."""
     if ts_ms is None:

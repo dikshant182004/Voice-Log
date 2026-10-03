@@ -478,8 +478,13 @@ async def handle_hangup(call_id: str):
       raise HTTPException(status_code=500, detail="Reporter not initialized")
 
   current_call_id.set(call_id)
-  await session.finalize(status="completed", end_reason="user_hangup")
-  return {"message": "Call finalized", "call_id": call_id}
+  persisted = await session.finalize(status="completed", end_reason="user_hangup")
+  return {
+    "message": "Call finalized",
+    "call_id": call_id,
+    "persisted": bool(persisted),
+    "spooled": not bool(persisted)
+  }
 
 
 def main():
