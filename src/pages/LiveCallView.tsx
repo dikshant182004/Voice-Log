@@ -113,10 +113,10 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         </div>
 
         {/* Real-time Microphone Waveform */}
-        <AudioVisualizer analyser={analyser} isActive={callState === 'live' && !isMuted} />
+        <AudioVisualizer analyser={analyser} isActive={isLive && !isMuted} />
 
         {/* Live Speech-to-Text Status & Interim Transcription */}
-        {callState === 'live' && (
+        {(isLive || interimTranscript) && (
           <div className="space-y-2">
             <div className="flex items-center justify-center gap-2 text-xs text-neutral-500">
               <Activity className={`w-3.5 h-3.5 ${isSpeechRecognitionActive && !isMuted ? 'text-emerald-500 animate-pulse' : 'text-neutral-400'}`} />
@@ -133,11 +133,14 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
 
             {/* Interim live speech preview */}
             {interimTranscript && (
-              <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-xs text-emerald-900 animate-pulse text-left flex items-start gap-2">
-                <Mic className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
-                <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 block">Hearing speech:</span>
-                  <span>"{interimTranscript}"</span>
+              <div className="p-3 bg-emerald-50/90 border border-emerald-300/90 rounded-xl text-xs text-emerald-950 text-left flex items-start gap-2.5 shadow-xs">
+                <Mic className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0 animate-pulse" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Live Voice Input</span>
+                  </div>
+                  <span className="text-sm font-medium text-emerald-900 leading-snug">"{interimTranscript}"</span>
                 </div>
               </div>
             )}
@@ -205,7 +208,7 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         </div>
 
         {/* Live Conversation Transcript */}
-        {callState === 'live' && (
+        {(isLive || transcript.length > 0) && (
           <div className="pt-4 border-t border-neutral-100 text-left space-y-4">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">Live Transcript</h3>
             <div className="max-h-56 overflow-y-auto space-y-2.5 pr-1 text-xs">

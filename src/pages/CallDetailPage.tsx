@@ -26,17 +26,17 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
       setIsLoading(true);
       setErrorMessage(null);
 
-      // Retry loop: allows Cloudflare D1 write transaction & judge to commit
+      // Check Cloudflare D1 for call record (1 short retry in case of transaction commit)
       let attempts = 0;
       let res: CallDetailResponse | null = null;
-      while (attempts < 4) {
+      while (attempts < 2) {
         try {
           res = await apiClient.getCall(callId, controller.signal);
           break;
         } catch (fetchErr: any) {
-          if (fetchErr instanceof HttpError && fetchErr.status === 404 && attempts < 3) {
+          if (fetchErr instanceof HttpError && fetchErr.status === 404 && attempts < 1) {
             attempts++;
-            await new Promise((r) => setTimeout(r, 600));
+            await new Promise((r) => setTimeout(r, 400));
             continue;
           }
           throw fetchErr;
@@ -48,7 +48,11 @@ export const CallDetailPage: React.FC<CallDetailPageProps> = ({ callId, onBack }
       if (err instanceof ConfigurationError) {
         setErrorMessage(err.message);
       } else if (err instanceof HttpError) {
-        setErrorMessage(`Server error ${err.status}: ${err.message}${err.requestId ? ` (Request ID: ${err.requestId})` : ''}`);
+        if (err.status === 404) {
+          setErrorMessage(`Call "${callId}" was not found in Cloudflare D1. The call was either not completed or the worker database has not yet received the report.`);
+        } else {
+          setErrorMessage(`Server error ${err.status}: ${err.message}${err.requestId ? ` (Request ID: ${err.requestId})` : ''}`);
+        }
       } else if (err instanceof NetworkError) {
         setErrorMessage(`Could not reach Cloudflare Worker: ${err.message}`);
       } else {
