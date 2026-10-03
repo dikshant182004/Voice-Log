@@ -244,6 +244,9 @@ async def bot_status():
         "tts": settings.tts_provider,
         "vad_stop_secs": settings.vad_stop_secs,
         "endpointing_ms": settings.endpointing_ms,
+        "llm_reasoning_effort": settings.llm_reasoning_effort,
+        "llm_max_completion_tokens": settings.llm_max_completion_tokens,
+        "context_max_messages": settings.context_max_messages,
         "active_sessions": len(active_sessions),
     }
 
