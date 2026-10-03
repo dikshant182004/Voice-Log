@@ -239,15 +239,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           onBotTranscript: (data: any) => {
             appendTurn('assistant', data?.text || '');
           },
-          onBotOutput: (data: any) => {
-            appendTurn('assistant', data?.text || '');
-          },
-          onBotLlmText: (data: any) => {
-            if (data?.text) appendTurn('assistant', data.text);
-          },
-          onBotTtsText: (data: any) => {
-            if (data?.text) appendTurn('assistant', data.text);
-          },
           onMetrics: (data: any) => {
             if (!data) return;
             const newMetrics: TurnMetrics = {};
@@ -262,9 +253,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
                   newMetrics.tts_ttfb_ms = val;
                 }
               }
-            }
-            if (newMetrics.stt_ms && newMetrics.llm_ttfb_ms && newMetrics.tts_ttfb_ms) {
-              newMetrics.voice_to_voice_ms = newMetrics.stt_ms + newMetrics.llm_ttfb_ms + newMetrics.tts_ttfb_ms;
             }
             if (Object.keys(newMetrics).length > 0) {
               setLatestMetrics((prev) => ({ ...prev, ...newMetrics }));
@@ -395,12 +383,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       } catch (_) {}
     }
 
-    if (nextMuted) {
-      stopSpeechRecognition();
-    } else {
-      startSpeechRecognition();
-    }
-  }, [isMuted, startSpeechRecognition, stopSpeechRecognition]);
+  }, [isMuted]);
 
   const sendTurnText = useCallback(async (text: string) => {
     if (!text.trim()) return;
