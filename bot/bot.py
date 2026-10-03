@@ -274,7 +274,6 @@ async def _run_session(
         session.runner = WorkerRunner(
             handle_sigint=False,
             handle_sigterm=False,
-            auto_end=False,
         )
         await session.runner.add_workers(worker)
 
@@ -303,7 +302,7 @@ async def _run_session(
             asyncio.create_task(session.request_stop(session.end_reason))
 
         session.runner_task = asyncio.create_task(
-            session.runner.run()
+            session.runner.run(auto_end=False)
         )
         logger.info("Pipecat pipeline started for call %s", session.call_id)
 
