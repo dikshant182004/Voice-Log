@@ -20,12 +20,16 @@ class BotSettings(BaseSettings):
 
     stt_model: str = Field(default="nova-3-general")
     llm_model: str = Field(default="openai/gpt-oss-20b")
-    # GPT-OSS is a reasoning model; keep reasoning deliberately low for live voice.
+    # GPT-OSS supports low/medium/high reasoning. Low keeps voice latency bounded.
     llm_reasoning_effort: str = Field(default="low")
-    # Completion budget includes reasoning tokens, so 150 was too restrictive in testing.
-    llm_max_completion_tokens: int = Field(default=320)
-    # Keep a bounded conversational window to prevent latency growth over long calls.
+    # Completion budget is shared by visible output and reasoning work.
+    llm_max_completion_tokens: int = Field(default=512)
+    # Ten messages is roughly five user/assistant exchanges and is far below
+    # GPT-OSS 20B's 131K context window; this is a latency guard, not a model limit.
     context_max_messages: int = Field(default=10)
+    # Retry a stalled streaming inference once after a short no-output window.
+    llm_retry_timeout_seconds: float = Field(default=4.0)
+
     tts_provider: str = Field(default="cartesia")
     tts_model: str = Field(default="sonic-3.6")
     tts_voice_id: str = Field(default="79a125e8-cd45-4c13-8a67-188112f4dd22")
@@ -35,13 +39,13 @@ class BotSettings(BaseSettings):
     worker_base_url: str = Field(default="http://localhost:8787")
     ingest_token: str = Field(default="")
 
-    # Turn detection tuning. VAD defines the speech boundary; the speech
-    # timeout gives the STT stream a short grace period to produce its final
-    # transcript before the LLM turn is submitted.
-    vad_stop_secs: float = Field(default=0.25)
+    # VAD marks the speech boundary. SpeechTimeout then gives STT a short
+    # grace period to deliver the final transcript.
+    vad_stop_secs: float = Field(default=0.20)
     user_speech_timeout: float = Field(default=0.55)
+    # Final safety net if STT never emits a usable final transcript.
     user_turn_stop_timeout: float = Field(default=4.0)
-    endpointing_ms: int = Field(default=250)
+    endpointing_ms: int = Field(default=200)
 
     max_call_seconds: int = Field(default=600)
     idle_timeout_seconds: int = Field(default=60)
