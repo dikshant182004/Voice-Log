@@ -26,8 +26,6 @@ export interface UseVoiceCallReturn {
   isAssistantSpeaking: boolean;
   transcript: TurnData[];
   interimTranscript: string;
-  isSpeechRecognitionActive: boolean;
-  speechRecognitionError: string | null;
   latestMetrics: TurnMetrics | null;
   errorMessage: string | null;
   analyser: AnalyserNode | null;
@@ -45,8 +43,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState<boolean>(false);
   const [transcript, setTranscript] = useState<TurnData[]>([]);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
-  const [isSpeechRecognitionActive, setIsSpeechRecognitionActive] = useState<boolean>(false);
-  const [speechRecognitionError, setSpeechRecognitionError] = useState<string | null>(null);
   const [latestMetrics, setLatestMetrics] = useState<TurnMetrics | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
@@ -54,7 +50,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const clientRef = useRef<PipecatClient | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const recognitionRef = useRef<any>(null);
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const callIdRef = useRef<string | null>(null);
@@ -78,108 +73,9 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     isAssistantSpeakingRef.current = isAssistantSpeaking;
   }, [isAssistantSpeaking]);
 
-  // Client-side Browser SpeechRecognition for instant, zero-latency visual feedback
-  const stopSpeechRecognition = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (_) {}
-      recognitionRef.current = null;
-    }
-    setIsSpeechRecognitionActive(false);
-    setInterimTranscript('');
-  }, []);
-
-  const startSpeechRecognition = useCallback(() => {
-    const SpeechRecognitionClass =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognitionClass) {
-      console.info('Browser SpeechRecognition API not available; relying purely on RTVI server STT.');
-      return;
-    }
-
-    stopSpeechRecognition();
-
-    try {
-      const recognition = new SpeechRecognitionClass();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        setIsSpeechRecognitionActive(true);
-        setSpeechRecognitionError(null);
-      };
-
-      recognition.onresult = (event: any) => {
-        let interim = '';
-        let final = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const item = event.results[i];
-          const text = item[0].transcript;
-          if (item.isFinal) {
-            final += text;
-          } else {
-            interim += text;
-          }
-        }
-
-        if (interim.trim()) {
-          setInterimTranscript(interim.trim());
-        }
-
-        if (final.trim()) {
-          const finalText = final.trim();
-          const elapsed = startTimeRef.current ? Date.now() - startTimeRef.current : 0;
-          setTranscript((prev) => {
-            // Avoid duplicate turn if identical text was just logged
-            if (
-              prev.length > 0 &&
-              prev[prev.length - 1].role === 'user' &&
-              prev[prev.length - 1].text.toLowerCase() === finalText.toLowerCase()
-            ) {
-              return prev;
-            }
-            return [...prev, { role: 'user', text: finalText, ts_ms: elapsed }];
-          });
-          setInterimTranscript('');
-        }
-      };
-
-      recognition.onerror = (e: any) => {
-        if (e.error === 'no-speech' || e.error === 'aborted') return;
-        console.warn('SpeechRecognition notice:', e.error);
-        setSpeechRecognitionError(`Microphone recognition: ${e.error}`);
-      };
-
-      recognition.onend = () => {
-        // Auto-restart if call is still active and not muted
-        if (
-          (callStateRef.current === 'live' || callStateRef.current === 'connecting') &&
-          !isMutedRef.current &&
-          !isAssistantSpeakingRef.current
-        ) {
-          try {
-            recognition.start();
-          } catch (_) {}
-        } else {
-          setIsSpeechRecognitionActive(false);
-        }
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-    } catch (err: any) {
-      console.warn('Speech recognition setup notice:', err);
-    }
-  }, [stopSpeechRecognition]);
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopSpeechRecognition();
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -262,7 +158,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
   const startCall = useCallback(async () => {
     try {
       setErrorMessage(null);
-      setSpeechRecognitionError(null);
       setCallState('requesting_mic');
       setDurationSeconds(0);
       setTranscript([]);
@@ -291,9 +186,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       setAnalyser(analyserNode);
 
       setCallState('connecting');
-
-      // Start local live speech recognition immediately so user sees what they speak
-      startSpeechRecognition();
 
       // 2. Instantiate SmallWebRTCTransport connecting to the local Pipecat bot
       const newCallId = crypto.randomUUID();
@@ -347,15 +239,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           onBotTranscript: (data: any) => {
             appendTurn('assistant', data?.text || '');
           },
-          onBotOutput: (data: any) => {
-            appendTurn('assistant', data?.text || '');
-          },
-          onBotLlmText: (data: any) => {
-            if (data?.text) appendTurn('assistant', data.text);
-          },
-          onBotTtsText: (data: any) => {
-            if (data?.text) appendTurn('assistant', data.text);
-          },
           onMetrics: (data: any) => {
             if (!data) return;
             const newMetrics: TurnMetrics = {};
@@ -370,9 +253,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
                   newMetrics.tts_ttfb_ms = val;
                 }
               }
-            }
-            if (newMetrics.stt_ms && newMetrics.llm_ttfb_ms && newMetrics.tts_ttfb_ms) {
-              newMetrics.voice_to_voice_ms = newMetrics.stt_ms + newMetrics.llm_ttfb_ms + newMetrics.tts_ttfb_ms;
             }
             if (Object.keys(newMetrics).length > 0) {
               setLatestMetrics((prev) => ({ ...prev, ...newMetrics }));
@@ -480,7 +360,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       const botUrl = (import.meta.env.VITE_BOT_URL || 'http://localhost:8765').replace(/\/+$/, '');
 
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        stopSpeechRecognition();
         if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
           audioCtxRef.current.close().catch(() => {});
           audioCtxRef.current = null;
@@ -489,21 +368,10 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
         setCallState('error');
         setErrorMessage('Microphone access denied. Please grant microphone permission in your browser.');
       } else {
-        // If the Python bot is not running or WebRTC transport could not reach it,
-        // keep the microphone and speech recognition active so user can speak, see live words, and test
-        setCallState('live');
-        startTimeRef.current = Date.now();
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = window.setInterval(() => {
-          setDurationSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000));
-        }, 1000);
-
-        setErrorMessage(
-          `Pipecat WebRTC signaling server at ${botUrl} is not running or reachable. Browser Speech-to-Text is active so you can test your microphone and live transcription. Start the Python bot with "python3 -m bot.bot" to enable full AI audio streaming.`
-        );
+        setErrorMessage(err?.message || `Pipecat WebRTC signaling server at ${botUrl} is not reachable.`);
       }
     }
-  }, [startSpeechRecognition, stopSpeechRecognition]);
+  }, []);
 
   const toggleMute = useCallback(() => {
     const nextMuted = !isMuted;
@@ -515,12 +383,7 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
       } catch (_) {}
     }
 
-    if (nextMuted) {
-      stopSpeechRecognition();
-    } else {
-      startSpeechRecognition();
-    }
-  }, [isMuted, startSpeechRecognition, stopSpeechRecognition]);
+  }, [isMuted]);
 
   const sendTurnText = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -546,8 +409,6 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
     isAssistantSpeaking,
     transcript,
     interimTranscript,
-    isSpeechRecognitionActive,
-    speechRecognitionError,
     latestMetrics,
     errorMessage,
     analyser,
