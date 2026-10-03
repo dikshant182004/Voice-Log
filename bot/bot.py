@@ -68,7 +68,7 @@ class CallSession:
         self.call_id = call_id
         self.reporter = reporter_instance
         self.started_at_dt = datetime.datetime.now(datetime.timezone.utc)
-        self.started_at = self.started_at_dt.isoformat()
+        self.started_at = self.started_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         self.ended_at: Optional[str] = None
         self.duration_ms = 0
         self.status = "connecting"
@@ -119,7 +119,7 @@ class CallSession:
             self._max_duration_task.cancel()
 
         ended_at_dt = datetime.datetime.now(datetime.timezone.utc)
-        self.ended_at = ended_at_dt.isoformat()
+        self.ended_at = ended_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         self.duration_ms = max(
             0,
             round((ended_at_dt - self.started_at_dt).total_seconds() * 1000),
@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI):
             await session.request_stop("server_shutdown")
             await session.finalize(
                 status="disconnected",
-                end_reason="server_shutdown",
+                end_reason="client_disconnect",
             )
         except Exception as exc:
             logger.error(
@@ -281,7 +281,7 @@ async def _run_session(
         async def on_pipeline_finished(worker_instance: Any, frame: Any):
             reason = session.end_reason or "client_disconnect"
             await session.finalize(
-                status="completed",
+                status="disconnected" if reason == "client_disconnect" else "completed",
                 end_reason=reason,
             )
             active_sessions.pop(session.call_id, None)
@@ -309,8 +309,8 @@ async def _run_session(
     except Exception:
         logger.exception("Failed to start Pipecat pipeline for %s", session.call_id)
         await session.finalize(
-            status="failed",
-            end_reason="pipeline_start_error",
+            status="error",
+            end_reason="error",
         )
         active_sessions.pop(session.call_id, None)
 
