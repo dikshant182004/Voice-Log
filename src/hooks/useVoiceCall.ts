@@ -151,12 +151,24 @@ export function useVoiceCall(onCallReported?: (callId: string) => void): UseVoic
           // Pipecat can deliver the same RTVI transcript through more than one
           // callback/event surface. De-duplicate exact repeats while preserving
           // legitimate consecutive turns.
-          if (
-            last &&
-            last.role === role &&
-            last.text.trim().toLowerCase() === trimmed.toLowerCase()
-          ) {
-            return prev;
+          if (last && last.role === role) {
+            const lastNorm = last.text.trim().toLowerCase().replace(/\s+/g, ' ');
+            const nextNorm = trimmed.toLowerCase().replace(/\s+/g, ' ');
+
+            if (lastNorm === nextNorm) {
+              return prev;
+            }
+
+            // RTVI may first deliver a partial assistant transcript and then
+            // the accumulated/full text. Replace the partial instead of
+            // rendering the answer twice.
+            if (role === 'assistant' && (nextNorm.startsWith(lastNorm) || lastNorm.startsWith(nextNorm))) {
+              const updated = [...prev];
+              if (nextNorm.length >= lastNorm.length) {
+                updated[updated.length - 1] = { ...last, text: trimmed, ts_ms: elapsed };
+              }
+              return updated;
+            }
           }
 
           return [...prev, { role, text: trimmed, ts_ms: elapsed }];
