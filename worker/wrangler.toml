@@ -10,7 +10,7 @@ head_sampling_rate = 1
 [[d1_databases]]
 binding = "DB"
 database_name = "mini-call-log-db"
-database_id = "mini-call-log-db-id"
+database_id = "4ced6801-eac0-4d70-bfd3-d23f04ed484c"
 migrations_dir = "migrations"
 
 [vars]

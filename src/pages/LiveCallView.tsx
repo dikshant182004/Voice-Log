@@ -16,8 +16,6 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
     isAssistantSpeaking,
     transcript,
     interimTranscript,
-    isSpeechRecognitionActive,
-    speechRecognitionError,
     latestMetrics,
     errorMessage,
     analyser,
@@ -119,15 +117,9 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
         {(isLive || interimTranscript) && (
           <div className="space-y-2">
             <div className="flex items-center justify-center gap-2 text-xs text-neutral-500">
-              <Activity className={`w-3.5 h-3.5 ${isSpeechRecognitionActive && !isMuted ? 'text-emerald-500 animate-pulse' : 'text-neutral-400'}`} />
+              <Activity className={`w-3.5 h-3.5 ${isMuted ? 'text-neutral-400' : 'text-emerald-500 animate-pulse'}`} />
               <span>
-                {isMuted
-                  ? 'Microphone muted'
-                  : isAssistantSpeaking
-                  ? 'Assistant speaking (mic speech paused to prevent echo)'
-                  : isSpeechRecognitionActive
-                  ? 'Speech-to-Text active & listening...'
-                  : 'Initializing speech recognition...'}
+                {isMuted ? 'Microphone muted' : isAssistantSpeaking ? 'Assistant speaking...' : 'Pipecat voice pipeline active'}
               </span>
             </div>
 
@@ -145,11 +137,6 @@ export const LiveCallView: React.FC<LiveCallViewProps> = ({ onCallFinished }) =>
               </div>
             )}
 
-            {speechRecognitionError && (
-              <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 text-left">
-                {speechRecognitionError} (You can also type your turn below).
-              </div>
-            )}
           </div>
         )}
 

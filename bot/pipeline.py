@@ -1,161 +1,228 @@
-"""
-Pipecat Voice AI Pipeline Builder.
-Configures streaming STT (Deepgram), conversational LLM (Groq),
-and streaming TTS (Cartesia with ElevenLabs failover),
-with Silero VAD turn detection and barge-in interruption handling.
+"""Pipecat 1.12.0 voice pipeline for the Mini Call Log service.
+
+Audio path:
+SmallWebRTC input -> Deepgram STT -> VAD user-turn control -> Groq -> Cartesia/ElevenLabs -> WebRTC output.
+Transcript and latency processors observe the real Pipecat frames without creating a second
+speech-recognition path in the browser.
+
+Turn detection uses VAD for the speech boundary, but the stop strategy waits briefly for
+Deepgram's finalized transcript before submitting the LLM turn. A watchdog prevents a
+broken STT/turn signal from holding a call forever.
 """
 
 import logging
-from typing import Any, Tuple
+from typing import Any
 
 from bot.config import BotSettings
-from bot.prompts import VOICE_SYSTEM_PROMPT
-from bot.observers.transcript import TranscriptCollector, TranscriptProcessor
 from bot.observers.metrics import MetricsCollector, MetricsProcessor
+from bot.observers.transcript import TranscriptCollector, TranscriptProcessor
+from bot.prompts import VOICE_SYSTEM_PROMPT
 
 logger = logging.getLogger("bot.pipeline")
 
 
 def create_pipeline(
-  settings: BotSettings,
-  transcript_collector: TranscriptCollector,
-  metrics_collector: MetricsCollector,
-  transport: Any,
-) -> Tuple[Any, Any]:
-  """
-  Assembles the Pipecat audio pipeline with SmallWebRTC transport.
-  
-  Pipeline Dataflow:
-  transport.input()
-    -> STT (Deepgram Nova-3 Streaming)
-    -> user_context_aggregator (with Silero VAD turn detection)
-    -> LLM (Groq Llama 3.3 70B Versatile, max_tokens=150)
-    -> TTS (Cartesia Sonic Streaming)
-    -> transport.output()
-    -> assistant_context_aggregator
-  """
-  from pipecat.pipeline.pipeline import Pipeline
-  from pipecat.pipeline.task import PipelineTask, PipelineParams
-  from pipecat.services.deepgram import DeepgramSTTService
-  from pipecat.services.groq import GroqLLMService
-  from pipecat.services.cartesia import CartesiaTTSService
-  from pipecat.services.elevenlabs import ElevenLabsTTSService
-  from pipecat.audio.vad.silero import SileroVADAnalyzer
-  from pipecat.audio.vad.vad_analyzer import VADParams
-  from pipecat.processors.aggregators.openai_llm_context import (
-    OpenAILLMContext,
-    OpenAILLMContextFrame,
-  )
+    settings: BotSettings,
+    transcript_collector: TranscriptCollector,
+    metrics_collector: MetricsCollector,
+    transport: Any,
+):
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams
+    from pipecat.pipeline.pipeline import Pipeline
+    from pipecat.frames.frames import (
+        ErrorFrame,
+        LLMContextFrame,
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
+    )
+    from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+    from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+    from pipecat.processors.aggregators.llm_context import LLMContext
+    from pipecat.processors.aggregators.llm_response_universal import (
+        LLMContextAggregatorPair,
+        LLMUserAggregatorParams,
+    )
+    from pipecat.services.cartesia.tts import CartesiaTTSService
+    from pipecat.services.deepgram.stt import DeepgramSTTService
+    from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+    from pipecat.services.groq.llm import GroqLLMService
+    from pipecat.turns.user_start.vad_user_turn_start_strategy import (
+        VADUserTurnStartStrategy,
+    )
+    from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+        SpeechTimeoutUserTurnStopStrategy,
+    )
+    from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-  # 1. Silero VAD Turn Detector (stop silence 0.2 - 0.4s)
-  vad = SileroVADAnalyzer(
-    params=VADParams(stop_secs=settings.vad_stop_secs),
-  )
-
-  # 2. Deepgram Streaming STT with endpointing (Pipecat 1.x Settings)
-  stt_settings = getattr(DeepgramSTTService, "Settings", None)
-  if stt_settings:
     stt = DeepgramSTTService(
-      api_key=settings.deepgram_api_key,
-      settings=stt_settings(
-        model=settings.stt_model,
-        language="en",
-        endpointing=settings.endpointing_ms,
-        interim_results=True,
-      ),
-    )
-  else:
-    stt = DeepgramSTTService(
-      api_key=settings.deepgram_api_key,
-      model=settings.stt_model,
-      language="en",
-      endpointing=settings.endpointing_ms,
-      interim_results=True,
-    )
-
-  # 3. LLM Context with voice system prompt
-  context = OpenAILLMContext([
-    {"role": "system", "content": VOICE_SYSTEM_PROMPT}
-  ])
-  context_aggregator = context.create_aggregator()
-
-  # 4. Groq Streaming LLM (Pipecat 1.x Settings)
-  llm_settings = getattr(GroqLLMService, "Settings", None)
-  if llm_settings:
-    llm = GroqLLMService(
-      api_key=settings.groq_api_key,
-      settings=llm_settings(
-        model=settings.llm_model,
-        max_tokens=150,
-        temperature=0.2,
-      ),
-    )
-  else:
-    llm = GroqLLMService(
-      api_key=settings.groq_api_key,
-      model=settings.llm_model,
-      max_tokens=150,
-      temperature=0.2,
-    )
-
-  # 5. Primary TTS (Cartesia Sonic 3.6 via Pipecat 1.x Settings) with optional ElevenLabs runtime fallback
-  if settings.tts_provider == "cartesia" and settings.cartesia_api_key:
-    tts_settings = getattr(CartesiaTTSService, "Settings", None)
-    if tts_settings:
-      tts = CartesiaTTSService(
-        api_key=settings.cartesia_api_key,
-        settings=tts_settings(
-          voice=settings.tts_voice_id,
-          model=settings.tts_model,
-          sample_rate=settings.tts_sample_rate,
+        api_key=settings.deepgram_api_key,
+        sample_rate=16000,
+        encoding="linear16",
+        channels=1,
+        settings=DeepgramSTTService.Settings(
+            model=settings.stt_model,
+            language="en-US",
+            endpointing=settings.endpointing_ms,
+            interim_results=True,
+            punctuate=True,
+            smart_format=True,
         ),
-      )
-    else:
-      tts = CartesiaTTSService(
-        api_key=settings.cartesia_api_key,
-        voice_id=settings.tts_voice_id,
-        sample_rate=settings.tts_sample_rate,
-      )
-  elif settings.elevenlabs_api_key:
-    eleven_settings = getattr(ElevenLabsTTSService, "Settings", None)
-    if eleven_settings:
-      tts = ElevenLabsTTSService(
-        api_key=settings.elevenlabs_api_key,
-        settings=eleven_settings(
-          voice="21m00Tcm4TlvDq8ikWAM",
+    )
+
+    llm = GroqLLMService(
+        api_key=settings.groq_api_key,
+        retry_timeout_secs=settings.llm_retry_timeout_seconds,
+        retry_on_timeout=True,
+        settings=GroqLLMService.Settings(
+            model=settings.llm_model,
+            # Groq recommends a moderate temperature range for GPT-OSS. Keep
+            # Keep reasoning low for interactive voice latency. Pipecat 1.12.0
+            # passes Settings.extra directly to OpenAI AsyncCompletions.create(),
+            # so include_reasoning cannot be placed there: the OpenAI SDK rejects
+            # it as an unexpected Python keyword argument before the request is
+            # sent to Groq. GPT-OSS reasoning is therefore left at Groq default
+            # response handling; Pipecat consumes the normal assistant content.
+            temperature=0.6,
+            max_completion_tokens=settings.llm_max_completion_tokens,
+            reasoning_effort=settings.llm_reasoning_effort,
+            system_instruction=VOICE_SYSTEM_PROMPT,
         ),
-      )
+    )
+
+    if settings.tts_provider == "cartesia":
+        tts = CartesiaTTSService(
+            api_key=settings.cartesia_api_key,
+            settings=CartesiaTTSService.Settings(
+                model=settings.tts_model,
+                voice=settings.tts_voice_id,
+            ),
+            sample_rate=settings.tts_sample_rate,
+            max_buffer_delay_ms=0,
+        )
+    elif settings.tts_provider == "elevenlabs":
+        tts = ElevenLabsTTSService(
+            api_key=settings.elevenlabs_api_key,
+            settings=ElevenLabsTTSService.Settings(
+                voice=settings.elevenlabs_voice_id,
+            ),
+        )
     else:
-      tts = ElevenLabsTTSService(
-        api_key=settings.elevenlabs_api_key,
-        voice_id="21m00Tcm4TlvDq8ikWAM",
-      )
-  else:
-    raise ValueError(f"No valid API key found for TTS provider: {settings.tts_provider}")
+        raise ValueError(
+            f"Unsupported TTS provider '{settings.tts_provider}'. "
+            "Use 'cartesia' or 'elevenlabs'."
+        )
 
-  transcript_proc = TranscriptProcessor(transcript_collector)
-  metrics_proc = MetricsProcessor(metrics_collector)
+    context = LLMContext()
+    vad = SileroVADAnalyzer(
+        sample_rate=16000,
+        params=VADParams(stop_secs=settings.vad_stop_secs),
+    )
 
-  # Build pipeline
-  pipeline = Pipeline([
-    transport.input(),
-    stt,
-    transcript_proc,
-    metrics_proc,
-    context_aggregator.user(),
-    llm,
-    tts,
-    transport.output(),
-    context_aggregator.assistant(),
-  ])
+    user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=vad,
+            user_turn_strategies=UserTurnStrategies(
+                start=[VADUserTurnStartStrategy(enable_interruptions=True)],
+                stop=[
+                    SpeechTimeoutUserTurnStopStrategy(
+                        user_speech_timeout=settings.user_speech_timeout,
+                        # Do not submit the turn until Deepgram has had a chance
+                        # to emit its finalized TranscriptionFrame. This avoids
+                        # the exact silent-turn race seen in the call logs.
+                        wait_for_transcript=True,
+                    )
+                ],
+            ),
+            # Hard safety net if STT never produces a final transcript.
+            user_turn_stop_timeout=settings.user_turn_stop_timeout,
+        ),
+    )
 
-  # Task parameters: enable metrics and barge-in interruptions
-  params = PipelineParams(
-    allow_interruptions=True,
-    enable_metrics=True,
-    enable_usage_metrics=True,
-  )
+    class LLMContextDiagnostics(FrameProcessor):
+        """Validate and trace the exact frame that should start LLM inference.
 
-  task = PipelineTask(pipeline, params)
+        This processor is deliberately a pass-through. It never mutates the
+        shared LLMContext, so it cannot consume or delay an inference frame.
+        """
 
-  return pipeline, task
+        async def process_frame(self, frame: Any, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                messages = frame.context.get_messages()
+                user_messages = [
+                    m.get("content", "")
+                    for m in messages
+                    if isinstance(m, dict) and m.get("role") == "user"
+                ]
+                last_user = str(user_messages[-1]).strip() if user_messages else ""
+                logger.info(
+                    "LLM context frame ready: messages=%d user=%r",
+                    len(messages),
+                    last_user[:160],
+                )
+            await self.push_frame(frame, direction)
+
+    class LLMResponseDiagnostics(FrameProcessor):
+        """Make provider-side failures visible without altering frame flow."""
+
+        async def process_frame(self, frame: Any, direction: FrameDirection):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMFullResponseStartFrame):
+                logger.info("LLM response started")
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                logger.info("LLM response ended")
+            elif isinstance(frame, ErrorFrame):
+                logger.error(
+                    "LLM/provider error: %s",
+                    getattr(frame, "error", frame),
+                )
+            await self.push_frame(frame, direction)
+
+    user_transcript = TranscriptProcessor(transcript_collector)
+    stt_metrics = MetricsProcessor(metrics_collector)
+    turn_metrics = MetricsProcessor(metrics_collector, observe_user_turn=True)
+    context_diagnostics = LLMContextDiagnostics()
+    assistant_transcript = TranscriptProcessor(transcript_collector)
+    llm_diagnostics = LLMResponseDiagnostics()
+    llm_metrics = MetricsProcessor(metrics_collector)
+    output_metrics = MetricsProcessor(metrics_collector)
+
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            user_transcript,
+            stt_metrics,
+            user_aggregator,
+            turn_metrics,
+            context_diagnostics,
+            llm,
+            llm_diagnostics,
+            assistant_transcript,
+            llm_metrics,
+            tts,
+            output_metrics,
+            transport.output(),
+            assistant_aggregator,
+        ]
+    )
+
+    worker = PipelineWorker(
+        pipeline,
+        params=PipelineParams(
+            audio_in_sample_rate=16000,
+            audio_out_sample_rate=settings.tts_sample_rate,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+            send_initial_empty_metrics=True,
+        ),
+        idle_timeout_secs=settings.idle_timeout_seconds,
+        cancel_on_idle_timeout=True,
+        cancel_runner_on_idle_timeout=False,
+        enable_rtvi=True,
+        conversation_id=None,
+    )
+
+    return pipeline, worker
