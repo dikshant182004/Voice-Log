@@ -1,20 +1,20 @@
 # Mini Call Log Service (Vaami.ai Take-Home)
 
-A production-grade, low-latency voice AI call logging and analytics platform. Users initiate real-time conversational voice calls from the browser via WebRTC, and every session is ingested, analyzed, and stored in **Cloudflare D1** alongside turn-by-turn transcripts and millisecond-level latency metrics.
+A low-latency voice AI call logging and analytics platform. Users initiate real-time conversational voice calls from the browser via WebRTC, and completed sessions are ingested, analyzed, and stored in **Cloudflare D1** alongside turn-by-turn transcripts and latency metrics.
 
 ---
 
 ## 1. High-Level Architecture
 
 ```
-Browser (Cloudflare Pages: Vite + React + TS)
+Browser (Vite + React + TS)
    │
    ├─ WebRTC Audio + Signaling ──► Pipecat Voice Bot (Local FastAPI + SmallWebRTC)
    │                                 │
    │                                 ├─ Audio In ──► Silero VAD (0.3s stop silence)
    │                                 ├─ Streaming STT ──► Deepgram (Nova-3 General, 200ms endpointing)
    │                                 ├─ Turn Aggregator ──► User Context Window
-   │                                 ├─ Fast LLM ──► Groq (gpt-oss-20b, max 150 tokens)
+   │                                 ├─ Fast LLM ──► Groq (openai/gpt-oss-20b, max 150 tokens)
    │                                 ├─ Streaming TTS ──► Cartesia Sonic 3.6 (16kHz PCM stream)
    │                                 └─ Audio Out ──► WebRTC Transport (Barge-in cancellation)
    │
@@ -25,18 +25,18 @@ Browser (Cloudflare Pages: Vite + React + TS)
 REST / JSON ──────────────────────► Cloudflare Worker API (Hono + Zod + Observability)
                                       │
                                       ├─ Ingestion ──► Atomic Batch INSERT (calls, transcripts, metrics)
-                                      ├─ Async Post-Call Judge ──► Groq LLM (openai/gpt-oss-120b, ctx.waitUntil) ──► call_evals
+                                      ├─ Async Post-Call Judge ──► Groq (openai/gpt-oss-120b, ctx.waitUntil) ──► call_evals
                                       ├─ Query Endpoints ──► Cursor Pagination & Percentile Aggregation
                                       │
                                       ▼
-                                Cloudflare D1 Database (SQLite at the Edge)
+                                Cloudflare D1 Database
 ```
 
 ### Core Design Principles
 1. **The Hot Path is Sacred**: Neither the Cloudflare Worker nor database writes sit on the real-time audio pipeline. Audio frames stay exclusively between the browser and the Pipecat bot.
-2. **Fail-Soft Reliability**: If the Worker or network drops, the Pipecat bot retries with exponential backoff and jitter, then spools payloads to disk (`bot/spool/<call_id>.json`). Spooled calls are automatically replayed on startup or via `python -m bot.reporter --flush`.
-3. **Idempotent Ingestion**: Call IDs are client/bot-generated UUIDs (v4/v7) serving as primary keys. Duplicate POST requests return `200 { duplicate: true }` without corrupting state.
-4. **Single Source of Truth Contracts**: API schemas are defined once in Zod (`worker/src/schemas.ts`), strictly typed across the React frontend (`src/types.ts`), and mirrored in the Python bot (`bot/observers/`).
+2. **Fail-Soft Reliability**: If the Worker or network drops, the Pipecat bot retries with exponential backoff and jitter, then spools payloads to disk (`bot/spool/<call_id>.json`). Spooled calls can be replayed on startup or via `python -m bot.reporter --flush`.
+3. **Idempotent Ingestion**: Call IDs are UUIDs serving as primary keys. Duplicate POST requests return `200 { duplicate: true }` without corrupting state.
+4. **Single Source of Truth Contracts**: API schemas are defined once in Zod (`worker/src/schemas.ts`), typed across the React frontend (`src/types.ts`), and mirrored in the Python bot.
 
 ---
 
@@ -50,7 +50,7 @@ Measured on **18 real conversational voice calls** conducted from **Bengaluru, I
 | **Streaming STT** | Deepgram Nova-3 General | **135 ms** | 155 ms | 100–200 ms | Interim results streaming + `endpointing = 200ms` |
 | **LLM Time-to-First-Token** | Groq gpt-oss-20b | **195 ms** | 220 ms | 150–300 ms | Low temperature (0.2), static prefix prompt caching, max 150 tokens |
 | **TTS Time-to-First-Byte** | Cartesia Sonic 3.6 | **110 ms** | 122 ms | 100–200 ms | Sentence-by-sentence streaming, 16kHz raw PCM, no post-processing |
-| **Voice-to-Voice (E2E)** | User speech end → Bot audio | **695 ms** | **785 ms** | **&lt; 800 ms (p50)** | Direct sentence pipelining; audio plays while LLM completes |
+| **Voice-to-Voice (E2E)** | User speech end → Bot audio | **695 ms** | **785 ms** | **< 800 ms (p50)** | Direct sentence pipelining; audio plays while LLM completes |
 
 *Methodology*: Voice-to-Voice latency is measured from the timestamp of the last detected user speech audio packet to the timestamp when the first synthesized audio byte is handed to the WebRTC transport output.
 
@@ -64,296 +64,302 @@ Measured on **18 real conversational voice calls** conducted from **Bengaluru, I
 ├─ .env.example                  # Environment variable reference
 ├─ .gitignore                    # Secrets, spool files, node_modules, build outputs
 ├─ package.json                  # Root scripts for dev, lint, worker tests, bot tests, evals
-├─ .github/workflows/deploy.yml  # Push-to-main CI/CD: lint -> vitest -> pytest -> eval gate -> D1 migrate -> deploy
+├─ .github/workflows/deploy.yml  # Current CI checks + commented future Cloudflare deployment
 ├─ worker/
 │  ├─ wrangler.toml              # Worker bindings, D1 database config, observability enabled
 │  ├─ migrations/
-│  │  ├─ 0001_init.sql           # Schema: calls, transcripts, call_metrics (FK CASCADE + indexes)
-│  │  └─ 0002_evals.sql          # Schema: call_evals (post-call LLM quality & sentiment scores)
+│  │  ├─ 0001_init.sql           # Schema: calls, transcripts, call_metrics
+│  │  └─ 0002_evals.sql          # Schema: call_evals
 │  ├─ src/
-│  │  ├─ index.ts                # Hono application wiring (middleware, routers, global error handlers)
+│  │  ├─ index.ts                # Hono application wiring
 │  │  ├─ schemas.ts              # Single source of truth Zod contracts
-│  │  ├─ db.ts                   # Repository layer: prepared D1 batch statements, percentiles, cursor paging
+│  │  ├─ db.ts                   # D1 repository layer, percentiles, cursor paging
 │  │  ├─ routes/
 │  │  │  ├─ calls.ts             # POST /calls, GET /calls, GET /calls/:id
-│  │  │  └─ stats.ts             # GET /stats?days=7 (Advanced Feature 1)
+│  │  │  └─ stats.ts             # GET /stats?days=7
 │  │  ├─ middleware/
-│  │  │  ├─ auth.ts              # Constant-time Bearer token verification
-│  │  │  ├─ cors.ts              # Configurable CORS with OPTIONS preflight
-│  │  │  ├─ requestLog.ts        # Structured JSON logger emitting one line per request with duration
-│  │  │  └─ errors.ts            # Standardized JSON error response handler
+│  │  │  ├─ auth.ts              # Bearer token verification
+│  │  │  ├─ cors.ts              # Configurable CORS
+│  │  │  ├─ requestLog.ts        # Structured request logging
+│  │  │  └─ errors.ts            # Standardized JSON errors
 │  │  ├─ lib/
-│  │  │  ├─ logger.ts            # Domain event logger (call.received, call.persisted, etc.)
-│  │  │  └─ ids.ts               # UUID validator and request ID generator
+│  │  │  ├─ logger.ts            # Domain event logger
+│  │  │  └─ ids.ts               # UUID/request ID helpers
 │  │  └─ evals/
-│  │     └─ postCallJudge.ts     # Advanced Feature 2: Async LLM evaluation via ctx.waitUntil
+│  │     └─ postCallJudge.ts     # Async LLM evaluation via ctx.waitUntil
 │  └─ test/
-│     └─ worker.test.ts          # Vitest suite (12 tests covering auth, idempotency, paging, D1 atomicity)
+│     └─ worker.test.ts           # Vitest suite
 ├─ bot/
-│  ├─ bot.py                     # FastAPI server with SmallWebRTC signaling & call simulation
-│  ├─ pipeline.py                # Swappable Pipecat pipeline (Silero VAD -> Deepgram -> Groq -> Cartesia)
-│  ├─ config.py                  # Pydantic Settings loaded from env with fail-fast validation
-│  ├─ prompts.py                 # Voice-optimized conversational prompt (no markdown, spoken style)
-│  ├─ reporter.py                # POST /calls with 3 retries, exponential backoff, spooling, and --flush
+│  ├─ bot.py                     # FastAPI + SmallWebRTC signaling/audio server
+│  ├─ pipeline.py                # Pipecat pipeline: VAD -> STT -> Groq -> TTS
+│  ├─ config.py                  # Environment configuration
+│  ├─ prompts.py                 # Voice-optimized conversational prompt
+│  ├─ reporter.py                # POST /calls, retry/backoff, disk spooling
 │  ├─ observers/
-│  │  ├─ transcript.py           # Thread-safe turn collector with interruption cut-off marking
-│  │  └─ metrics.py              # Turn latency breakdown (STT, LLM TTFB, TTS TTFB, Voice-to-Voice)
-│  ├─ spool/                     # Offline call storage directory for network outage resilience
+│  │  ├─ transcript.py           # Turn collector + interruption handling
+│  │  └─ metrics.py              # Per-turn latency metrics
+│  ├─ spool/                     # Offline call storage directory
 │  ├─ requirements.txt           # Pinned Python dependencies
-│  └─ tests/
-│     ├─ test_bot.py             # Pytest suite
-│     └─ run_tests.py            # Zero-dependency standard library test runner
+│  └─ tests/                     # Bot tests
 ├─ evals/
-│  ├─ dataset.jsonl              # 24 scripted test cases across 7 operational categories
-│  ├─ rubric.md                  # 5-point evaluation criteria (relevance, brevity, tone, safety, grounding)
-│  ├─ run_evals.py               # Deterministic rule checks + LLM-as-judge evaluation harness
-│  └─ report.json                # Latest evaluation artifact generated during test runs
-└─ src/                          # Cloudflare Pages Frontend (Vite + React + TypeScript + Tailwind)
+│  ├─ dataset.jsonl              # Scripted test cases
+│  ├─ rubric.md                  # LLM evaluation rubric
+│  ├─ run_evals.py               # Regression/evaluation harness
+│  └─ report.json                # Latest evaluation artifact
+└─ src/                          # React + TypeScript frontend
    ├─ types.ts                   # Shared frontend contracts
-   ├─ api/client.ts              # Fetch client with timeout, fallback dataset, and error typing
-   ├─ hooks/useVoiceCall.ts      # WebRTC microphone capture, audio analyser, and call lifecycle
-   ├─ components/
-   │  ├─ TopNav.tsx              # Three-zone top navigation bar (Zero-pill discipline)
-   │  ├─ LatencyBars.tsx         # Hand-rolled SVG comparison bars for pipeline stages
-   │  ├─ LatencyLineChart.tsx    # Hand-rolled SVG voice-to-voice turn progression line chart
-   │  └─ AudioVisualizer.tsx     # Canvas audio frequency visualizer for live mic input
-   └─ pages/
-      ├─ CallListPage.tsx        # Call list with search, status filters, cursor pagination
-      ├─ CallDetailPage.tsx      # Chat transcript, interrupted tags, metrics table, LLM eval card
-      ├─ StatsPage.tsx           # Advanced Feature 1: Latency dashboard with time windows
-      ├─ LiveCallView.tsx        # Real-time microphone calling interface and benchmark runner
-      └─ DevConsolePage.tsx      # cURL examples, Cloudflare Observability log preview, bot setup
+   ├─ api/client.ts              # API client
+   ├─ hooks/useVoiceCall.ts      # WebRTC microphone/call lifecycle
+   ├─ components/                # UI/analytics components
+   └─ pages/                     # Call list, details, stats, live call, dev console
 ```
 
 ---
 
 ## 4. Setup and Run Instructions
 
+### Current assessment setup
+
+The **frontend, Worker, and Pipecat bot are currently run locally** for the assessment/demo. The Pipecat bot is not deployed as a public service because it handles the real-time WebRTC/Python voice pipeline. The live demo is performed on the local environment while the resulting call data is persisted in Cloudflare D1 and the Worker logs are visible in Cloudflare.
+
 ### Prerequisites
 - Node.js >= 20.x
 - Python >= 3.10
-- Free tier API keys:
-  - [Groq Console](https://console.groq.com)
-  - [Deepgram Console](https://console.deepgram.com)
-  - [Cartesia Console](https://play.cartesia.ai)
+- API keys:
+  - Groq
+  - Deepgram
+  - Cartesia
 
 ### 1. Environment Configuration
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Fill in your API keys:
+
+Copy `.env.example` to `.env` and fill in the required values:
+
 ```env
 DEEPGRAM_API_KEY=your_deepgram_key
 GROQ_API_KEY=your_groq_key
 CARTESIA_API_KEY=your_cartesia_key
-INGEST_TOKEN=secret_ingest_token_12345
+INGEST_TOKEN=your_ingest_token
 WORKER_BASE_URL=http://localhost:8787
 VITE_API_BASE_URL=http://localhost:8787
 ```
 
 ### 2. Run the Cloudflare Worker API
+
 ```bash
-# In the worker directory:
 cd worker
 npm install
-# Run local D1 migrations:
 npx wrangler d1 migrations apply mini-call-log-db --local
-# Start local worker dev server (port 8787):
 npx wrangler dev --port 8787
 ```
 
-### 3. Run the Frontend (Cloudflare Pages)
+### 3. Run the Frontend
+
+From the repository root:
+
 ```bash
-# In the project root:
 npm install
 npm run dev
-# Open http://localhost:3000 in your browser
 ```
+
+Open `http://localhost:3000`.
 
 ### 4. Run the Pipecat Voice Bot Locally
-```bash
-# Install bot dependencies:
-pip install -r bot/requirements.txt
 
-# Run the signaling and audio server:
+```bash
+pip install -r bot/requirements.txt
 python3 -m bot.bot
-# The bot listens on http://localhost:8765
 ```
+
+The bot listens on `http://localhost:8765`.
 
 ---
 
 ## 5. Running Tests and Evaluations
 
-Run all verification suites with one command:
+Run the main verification suites:
+
 ```bash
-# Run Worker unit tests, Bot unit tests, and the Offline Eval Gate:
-npm run test:worker && npm run test:bot && npm run test:evals
+npm run test:worker
+npm run test:bot
+npm run test:evals
 ```
 
-### 1. Worker Unit Tests (Vitest)
+### Worker Unit Tests
+
 ```bash
 npm run test:worker
 ```
-Tests 12 invariants: Bearer token security, 401 unauthorized handling, 400 validation error formatting, 201 creation, 200 duplicate idempotency, cursor pagination, 404 for unknown IDs, D1 atomic batching, and CORS preflight.
 
-### 2. Bot Unit Tests (Python)
+Covers authentication, validation, call creation, idempotency, pagination, missing-call handling, D1 batching, and CORS behavior.
+
+### Bot Unit Tests
+
 ```bash
 npm run test:bot
-# or with pytest:
+# or
 pytest bot/tests/
 ```
-Tests transcript accumulation, speech barge-in truncation with `interrupted: true`, metric calculation math (STT, LLM TTFB, TTS TTFB, V2V), local disk spooling fallback, and the single-execution `finalize()` guarantee.
 
-### 3. Offline Regression Eval Gate (CI Gate)
+Covers transcript accumulation, interruption handling, latency calculation, disk spooling, and finalization behavior.
+
+### Offline Regression Eval Gate
+
 ```bash
 npm run test:evals
-# or directly:
+# or
 python3 evals/run_evals.py --gate
 ```
-Runs 24 scripted test cases across 7 categories (normal Q&A, small talk, off-topic, ambiguous input, interruption fragments, prompt injections, and list requests). Asserts deterministic constraints (no markdown, no bullet lists, brevity under 2 sentences, no leaked system prompt) and runs LLM-as-a-judge scoring against `evals/rubric.md`. Exits with code 1 if deterministic pass rate &lt; 100% or mean score &lt; 4.0.
+
+Runs the scripted regression/evaluation suite and exits non-zero when the configured evaluation gate fails.
 
 ---
 
-## 6. API Reference (Single Source of Truth)
+## 6. API Reference
 
 ### `POST /calls`
+
 Ingests a completed call session from the bot.
+
 - **Headers**: `Authorization: Bearer <INGEST_TOKEN>`, `Content-Type: application/json`
-- **Request Body**:
+- **Responses**:
+  - `201 Created`: new call persisted
+  - `200 OK`: duplicate/idempotent replay
+  - `400 Bad Request`: schema validation failure
+  - `401 Unauthorized`: missing/invalid Bearer token
+
+Example configuration payload:
+
 ```json
 {
-  "call_id": "9b2c3d4e-5f6a-4b7c-8d9e-0123456789ab",
-  "started_at": "2026-10-02T10:00:00.000Z",
-  "ended_at": "2026-10-02T10:01:30.000Z",
-  "duration_ms": 90000,
-  "status": "completed",
-  "end_reason": "user_hangup",
   "config": {
     "stt": "deepgram:nova-3",
-    "llm": "groq:llama-3.3-70b-versatile",
-    "tts": "cartesia:sonic",
+    "llm": "groq:openai/gpt-oss-20b",
+    "tts": "cartesia:sonic-3.6",
     "persona": "default"
-  },
-  "transcript": [
-    { "turn_index": 0, "role": "user", "text": "What is the return window?", "ts_ms": 1100, "interrupted": false },
-    { "turn_index": 1, "role": "assistant", "text": "You can return items within 30 days.", "ts_ms": 1780, "interrupted": false }
-  ],
-  "metrics": [
-    { "turn_index": 1, "stt_ms": 130, "llm_ttfb_ms": 190, "tts_ttfb_ms": 110, "voice_to_voice_ms": 680 }
-  ],
-  "usage": { "llm_input_tokens": 85, "llm_output_tokens": 42, "tts_chars": 68 }
+  }
 }
 ```
-- **Responses**:
-  - `201 Created`: `{ "id": "uuid" }`
-  - `200 OK`: `{ "id": "uuid", "duplicate": true }` (Idempotent replay)
-  - `400 Bad Request`: Zod validation issues with field paths
-  - `401 Unauthorized`: Bad or missing Bearer token
 
 ### `GET /calls?limit=20&cursor=<opaque>`
-Returns paginated call summaries ordered by `started_at DESC, id DESC`. Transcripts are excluded to optimize list performance.
-```json
-{
-  "items": [
-    {
-      "id": "9b2c3d4e-5f6a-4b7c-8d9e-0123456789ab",
-      "started_at": "2026-10-02T10:00:00.000Z",
-      "duration_ms": 90000,
-      "status": "completed",
-      "turn_count": 2,
-      "p50_voice_to_voice_ms": 680,
-      "summary": "Caller confirmed 30-day return window."
-    }
-  ],
-  "next_cursor": "eyJzIjoiMjAyNi0xMC0wMlQxMDowMDowMC4wMDBaIiwiaWQiOiI5YjJjM2Q0ZS4uLiJ9"
-}
-```
+
+Returns paginated call summaries ordered by `started_at DESC, id DESC`.
 
 ### `GET /calls/:id`
-Returns the complete call record, ordered turn transcript (with `interrupted` badges), per-turn latency metrics, aggregate percentiles, and LLM evaluation (if completed).
 
-### `GET /stats?days=7` (Advanced Feature 1)
-Returns aggregated percentiles across the voice pipeline, volume over time, and reliability rates:
-```json
-{
-  "time_window_days": 7,
-  "total_calls": 18,
-  "completed_calls": 17,
-  "error_rate_pct": 5.5,
-  "interruption_rate_pct": 14.2,
-  "avg_duration_ms": 98400,
-  "latency_percentiles": {
-    "voice_to_voice": { "avg_ms": 703, "p50_ms": 695, "p95_ms": 785 },
-    "stt": { "avg_ms": 138, "p50_ms": 135, "p95_ms": 155 },
-    "llm_ttfb": { "avg_ms": 198, "p50_ms": 195, "p95_ms": 220 },
-    "tts_ttfb": { "avg_ms": 111, "p50_ms": 110, "p95_ms": 122 }
-  },
-  "daily_volume": [
-    { "date": "2026-10-01", "call_count": 6, "avg_duration_ms": 110000 },
-    { "date": "2026-10-02", "call_count": 12, "avg_duration_ms": 94000 }
-  ]
-}
-```
+Returns the complete call record, ordered transcript, per-turn latency metrics, aggregate percentiles, and LLM evaluation when available.
+
+### `GET /stats?days=7`
+
+Returns aggregate call volume, reliability, and latency percentiles.
 
 ---
 
 ## 7. Cloudflare Observability & Logging
 
-Observability is enabled in `wrangler.toml` (`[observability] enabled = true`). The Worker emits **one structured JSON line per request** and structured domain events filterable in the Cloudflare Dashboard:
-- `call.received`: Ingestion payload received
-- `call.persisted`: Atomic D1 batch write successful
-- `call.duplicate`: Idempotent replay detected
-- `call.validation_failed`: Zod schema violation
-- `call.eval_completed`: Asynchronous judge successfully evaluated call
-- `call.eval_failed`: Asynchronous judge encountered an error
+Observability is enabled in `worker/wrangler.toml`:
 
-**Example Cloudflare Dashboard Query**:
-Filter by `call_id = "9b2c3d4e-5f6a-4b7c-8d9e-0123456789ab"` to inspect the full trace of any call.
+```toml
+[observability]
+enabled = true
+head_sampling_rate = 1
+```
 
----
+The Worker emits structured request/domain events including:
+- `call.received`
+- `call.persisted`
+- `call.duplicate`
+- `call.validation_failed`
+- `call.eval_completed`
+- `call.eval_failed`
 
-## 8. Decisions and Tradeoffs
-
-1. **Why Groq over OpenAI/Anthropic for LLM?**
-   Groq’s LPU inference architecture delivers a time-to-first-token of **150–200 ms**, compared to 600–1200 ms for standard cloud LLM endpoints. For conversational voice, keeping TTFB under 250 ms is critical to achieve an end-to-end voice-to-voice latency under 800 ms.
-2. **Why Cartesia Sonic over ElevenLabs for Default TTS?**
-   Cartesia Sonic achieves a TTFB of **100–120 ms** via streaming WebSocket chunks, whereas ElevenLabs Turbo averages 200–350 ms. ElevenLabs is maintained as a configured fallback provider.
-3. **Why Does the Pipecat Bot Run Locally Instead of Inside a Worker?**
-   Pipecat relies on Python, Silero VAD (PyTorch ONNX model runtime), raw UDP WebRTC RTP transport, and persistent bidirectional WebSockets. Cloudflare Workers have a 30-second CPU time limit, memory caps, and do not natively support full WebRTC media processing. Containerized hosting (such as Fly.io) is the production path.
-4. **Why D1 as the Exclusive Database?**
-   Per the assignment requirements, D1 is the sole persistence store. D1 places SQLite databases at Cloudflare edge locations, giving sub-10ms read latencies for global dashboard users without requiring external database connection pools.
-5. **Why Write to the Worker Post-Call Only?**
-   Writing to the database during live speech would introduce network jitter and database lock contention on the real-time audio thread. Transcripts and metrics are accumulated in bot memory and dispatched atomically once the session ends.
+During the live demo, a completed call can be traced in the Cloudflare dashboard using its `call_id`. The current project keeps observability enabled even though the application services are run locally; the Worker remains the Cloudflare-backed ingestion/logging component.
 
 ---
 
-## 9. Honest Gaps & What I'd Improve
+## 8. GitHub Actions / CI-CD Status
 
-- **Bot Container Deployment**: The bot currently runs locally. In a full production rollout, package the bot as a Docker container deployed to **Fly.io** or AWS ECS with GPU/CPU auto-scaling and health checks.
-- **Buffer Ingestion with Cloudflare Queues**: If call ingestion spikes to thousands of concurrent calls ending simultaneously, placing a Cloudflare Queue between the ingestion endpoint and D1 will prevent D1 write concurrency bottlenecks.
-- **Audio Storage with Cloudflare R2**: Storing raw audio recordings was omitted per the assignment constraints ("D1 = the only database"). Adding opt-in audio recording uploaded asynchronously to Cloudflare R2 with lifecycle retention policies would enable audio playback in the call detail view.
-- **User Authentication**: GET endpoints are currently open for review accessibility. In production, protect them using **Cloudflare Access** (Zero Trust) or JWT verification.
-- **Geographic Network Latency**: Voice providers are primarily US-hosted while testing was performed from India. Placing bot instances closer to user regions (e.g. AWS ap-south-1) with dedicated Direct Connect links to provider edge locations would shave an additional 80–120 ms off trans-continental RTT.
+The current GitHub Actions workflow intentionally keeps CI simple because the assessment setup runs the frontend, Worker, and Pipecat bot locally.
+
+On pushes/PRs to `main`, the active workflow runs:
+1. TypeScript checks.
+2. Worker unit tests.
+3. Bot unit tests.
+
+It does **not** require Cloudflare deployment secrets in the current assessment setup.
+
+### Requested production CI/CD flow
+
+The assignment asks for the following on every push to `main`:
+
+```
+push to main
+   ↓
+D1 migrations
+   ↓
+Worker deployment
+   ↓
+Pages deployment
+```
+
+That deployment job is preserved as a **commented section** in `.github/workflows/deploy.yml`. Once the Worker and Pages are deployed as public services, the commented job can be enabled by providing the required Cloudflare credentials and frontend/API environment values.
+
+This keeps the current assessment workflow reproducible without pretending that the locally running bot is a public production service.
 
 ---
 
-## 10. Version Notes (Snapshot 2 Oct 2026)
+## 9. Decisions and Tradeoffs
 
-This project strictly adheres to the October 2026 Dependency Version Policy across all modules (Worker, Frontend, Bot, Evals, CI):
+1. **Why Groq for the conversational LLM?**  
+   Low time-to-first-token is important for conversational voice. The in-call model is `openai/gpt-oss-20b`; the asynchronous post-call judge uses `openai/gpt-oss-120b`.
 
-1. **Model Upgrades & Decommissioning**:
-   - **Groq LLM**: Upgraded to `openai/gpt-oss-20b` (conversational in-call bot) and `openai/gpt-oss-120b` (eval judge). Legacy `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` have been decommissioned.
-   - **Deepgram STT**: Pinned to `nova-3-general` streaming speech-to-text.
-   - **Cartesia TTS**: Pinned to `sonic-3.6` streaming synthesis (legacy sonic-2 and sonic-turbo sunset after Oct 2026).
-2. **Pipecat 1.12.0 API Migration**:
-   - Modernized `bot/pipeline.py` to use Pipecat 1.x `Settings` objects (`CartesiaTTSService.Settings(...)`, `DeepgramSTTService.Settings(...)`, `GroqLLMService.Settings(...)`), eliminating deprecated direct constructor kwargs (`model=`, `voice=`).
-   - Pinned Python dependencies via `uv`: `pipecat-ai[webrtc,runner,silero,deepgram,groq,cartesia]==1.12.0`, `openai<3` (guarding against TLS/cert regressions), `fastapi==0.115.6`, `httpx==0.28.1`, `pydantic==2.10.6`.
-3. **Cloudflare Worker & Schema Unification**:
-   - Pinned `wrangler 4.146.0`, `hono 4.13.12`, and `zod 4.5.4` unified across root and worker package manifests.
-   - Migrated worker tests to `vitest 4.1.11` + `@cloudflare/vitest-plugin 1.3.5`, replacing the deprecated `@cloudflare/vitest-pool-workers`.
-4. **Frontend Modernization**:
-   - Pinned `react 19.3.0` & `react-dom 19.3.0` (meeting `>=19.2.7` policy), `vite ^8.3.0`, `react-router 8.4.0` (direct import from `react-router`), and official `@pipecat-ai/client-js 1.13.1` / `@pipecat-ai/small-webrtc-transport 1.10.8`.
-5. **CI/CD Pipeline**:
-   - Updated GitHub Actions to `actions/checkout@v7`, `actions/setup-node@v7` (Node 26 LTS), `actions/setup-python@v7` (Python 3.12), and `cloudflare/wrangler-action@v4` with pinned `wranglerVersion: "4.146.0"`.
+2. **Why Cartesia Sonic for TTS?**  
+   Streaming synthesis and low time-to-first-byte make it suitable for conversational responses. ElevenLabs can be maintained as a future/fallback provider.
 
+3. **Why does the Pipecat bot run locally instead of inside a Worker?**  
+   Pipecat requires Python-based processing, VAD/model runtime, WebRTC media handling, and persistent real-time connections. Cloudflare Workers are not the appropriate runtime for the complete media pipeline. A containerized service would be the production deployment path.
+
+4. **Why D1 as the persistence store?**  
+   D1 provides the SQL persistence required by the assignment while integrating naturally with the Cloudflare Worker.
+
+5. **Why write to the Worker post-call instead of during live speech?**  
+   The real-time audio path should remain independent from database/network writes. The bot accumulates transcript and latency data and sends the completed call to `POST /calls`, with retry and disk-spool fallback.
+
+6. **Why is the frontend not deployed for the assessment?**  
+   The frontend can be deployed independently, but a useful public voice demo also requires a publicly reachable Pipecat/WebRTC bot. For this assessment, the complete frontend + Worker + bot flow is demonstrated locally instead of deploying a separate production bot service solely for the assessment.
+
+---
+
+## 10. Honest Gaps & What I'd Improve
+
+- **Bot Container Deployment**: Deploy the Pipecat bot as a Dockerized service (for example on Fly.io or AWS ECS) with health checks and scaling.
+- **Public Frontend Deployment**: Deploy the Vite/React frontend to Cloudflare Pages once the public bot endpoint is available.
+- **Queue-based ingestion**: Add Cloudflare Queues if call-completion traffic becomes large enough to create D1 write contention.
+- **Audio storage**: Add opt-in audio recording through R2 if recordings become a product requirement.
+- **User authentication**: Protect review/query endpoints with Cloudflare Access or JWT verification in production.
+- **Geographic optimization**: Place bot instances closer to users and inference-provider regions to reduce trans-continental network latency.
+
+---
+
+## 11. Version Notes (Snapshot 2 Oct 2026)
+
+1. **Models**
+   - Conversational Groq model: `openai/gpt-oss-20b`
+   - Post-call evaluation model: `openai/gpt-oss-120b`
+   - Legacy `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` references have been removed from the current implementation/documentation.
+
+2. **Deepgram**
+   - Streaming STT uses Nova-3 General.
+
+3. **Cartesia**
+   - Streaming TTS uses Sonic 3.6.
+
+4. **Pipecat**
+   - Pipecat is pinned to 1.12.0 with the current 1.x `Settings`-based provider configuration.
+
+5. **Cloudflare**
+   - Wrangler is pinned to 4.146.0.
+   - Hono and Zod versions are pinned in the Worker/root manifests.
+   - D1 configuration and observability are defined in `worker/wrangler.toml`.
+
+6. **Frontend**
+   - React, Vite, React Router, Pipecat client, and Small WebRTC transport are pinned to the current project versions.

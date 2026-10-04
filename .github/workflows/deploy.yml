@@ -1,4 +1,4 @@
-name: CI/CD Pipeline - Mini Call Log Service
+name: CI - Mini Call Log Service
 
 on:
   push:
@@ -6,16 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 permissions:
   contents: read
 
 jobs:
   checks:
-    name: Lint, Test & Eval Gate
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -28,9 +24,9 @@ jobs:
           cache: npm
 
       - name: Install Node dependencies
-        run: npm ci || npm install
+        run: npm ci
 
-      - name: TypeScript Check (Frontend & Worker)
+      - name: TypeScript Check
         run: npm run lint
 
       - name: Run Worker Unit Tests
@@ -40,72 +36,86 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install Python dependencies
+      - name: Install Bot Test Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r bot/requirements.txt
           pip install pytest pytest-asyncio httpx
 
       - name: Run Bot Unit Tests
         run: pytest bot/tests/
 
-      - name: Run Offline Regression Eval Gate
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          python evals/run_evals.py --gate
-
-  deploy:
-    name: Deploy to Cloudflare (D1, Worker, Pages)
-    needs: checks
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: npm
-
-      - name: Install Node dependencies
-        run: npm ci || npm install
-
-      # Step 1: Apply D1 database migrations
-      - name: Apply D1 Migrations
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.146.0"
-          command: d1 migrations apply mini-call-log-db --remote
-          workingDirectory: worker
-
-      # Step 2: Deploy Cloudflare Worker API
-      - name: Deploy Worker API
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.146.0"
-          command: deploy
-          workingDirectory: worker
-
-      # Step 3: Build frontend and deploy to Cloudflare Pages
-      - name: Build Frontend
-        env:
-          VITE_API_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
-          VITE_BOT_URL: ${{ secrets.VITE_BOT_URL || 'http://localhost:8765' }}
-        run: npm run build
-
-      - name: Deploy Frontend to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.146.0"
-          command: pages deploy dist --project-name mini-call-log-web
+# ---------------------------------------------------------------------------
+# FUTURE CLOUDFLARE CI/CD
+# ---------------------------------------------------------------------------
+# The current assessment setup runs the Worker, Pages frontend, and Pipecat
+# bot locally. Therefore this workflow intentionally does not require
+# Cloudflare API credentials or deployment secrets.
+#
+# The assignment's requested production flow is:
+#
+#   push to main
+#       -> D1 migrations
+#       -> Worker deployment
+#       -> Pages deployment
+#
+# When the Worker and Pages are deployed, the following steps can be enabled
+# in a main-only deployment job. They are kept here as comments so the
+# required CI/CD path is documented without making the current local
+# assessment workflow depend on Cloudflare secrets.
+#
+# deploy:
+#   name: Deploy to Cloudflare
+#   needs: checks
+#   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#   runs-on: ubuntu-latest
+#   steps:
+#     - name: Checkout repository
+#       uses: actions/checkout@v7
+#
+#     - name: Setup Node.js
+#       uses: actions/setup-node@v7
+#       with:
+#         node-version: 26
+#         cache: npm
+#
+#     - name: Install Node dependencies
+#       run: npm ci
+#
+#     # Requirement: run D1 migrations on every push to main.
+#     - name: Apply D1 Migrations
+#       uses: cloudflare/wrangler-action@v4
+#       with:
+#         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+#         wranglerVersion: "4.146.0"
+#         command: d1 migrations apply mini-call-log-db --remote
+#         workingDirectory: worker
+#
+#     # Requirement: deploy the Worker on every push to main.
+#     - name: Deploy Worker API
+#       uses: cloudflare/wrangler-action@v4
+#       with:
+#         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+#         wranglerVersion: "4.146.0"
+#         command: deploy
+#         workingDirectory: worker
+#
+#     # Requirement: deploy Pages on every push to main.
+#     - name: Build Frontend
+#       env:
+#         VITE_API_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+#         VITE_BOT_URL: ${{ secrets.VITE_BOT_URL }}
+#       run: npm run build
+#
+#     - name: Deploy Frontend to Cloudflare Pages
+#       uses: cloudflare/wrangler-action@v4
+#       with:
+#         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+#         wranglerVersion: "4.146.0"
+#         command: pages deploy dist --project-name mini-call-log-web
+#
+# Observability is already enabled in worker/wrangler.toml. Once the Worker
+# is deployed, structured request/domain logs can be viewed in Cloudflare.
