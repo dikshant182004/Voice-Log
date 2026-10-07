@@ -1,9 +1,9 @@
 import React from 'react';
-import { PhoneCall, BarChart3, ListFilter, Terminal } from 'lucide-react';
+import { PhoneCall, BarChart3, ListFilter, Terminal, Bot } from 'lucide-react';
 
 interface TopNavProps {
   currentTab: 'calls' | 'stats' | 'live' | 'logs' | 'agents';
-  onSelectTab: (tab: 'calls' | 'stats' | 'live' | 'logs') => void;
+  onSelectTab: (tab: 'calls' | 'stats' | 'live' | 'logs' | 'agents') => void;
   onStartCall: () => void;
   isCallActive?: boolean;
 }
@@ -19,13 +19,6 @@ export const TopNav: React.FC<TopNavProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Zone 1: Single text element wordmark */}
         <div className="flex items-center gap-6">
-          <button
-          type="button"
-          onClick={() => onSelectTab('agents')}
-          className={`px-3 py-2 text-sm ${currentTab === 'agents' ? 'font-semibold text-neutral-900' : 'text-neutral-500'}`}
-        >
-          Agents
-        </button>
         <button
             onClick={() => onSelectTab('calls')}
             className="text-lg font-bold tracking-tight text-neutral-900 hover:text-neutral-700 transition-colors text-left"
@@ -68,6 +61,17 @@ export const TopNav: React.FC<TopNavProps> = ({
           >
             <PhoneCall className="w-4 h-4" />
             <span>Live Voice Agent</span>
+          </button>
+          <button
+            onClick={() => onSelectTab('agents')}
+            className={`transition-colors flex items-center gap-1.5 pb-0.5 ${
+              currentTab === 'agents'
+                ? 'text-neutral-900 border-b-2 border-neutral-900 font-semibold'
+                : 'hover:text-neutral-900'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            <span>Agents</span>
           </button>
           <button
             onClick={() => onSelectTab('logs')}
