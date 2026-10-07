@@ -3,6 +3,7 @@ import { WorkerEnv, callsRouter } from './routes/calls';
 import { statsRouter } from './routes/stats';
 import { agentsRouter } from './routes/agents';
 import { apiKeysRouter } from './routes/apiKeys';
+import { policiesRouter } from './routes/policies';
 import { corsMiddleware } from './middleware/cors';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { errorHandler, notFoundHandler } from './middleware/errors';
@@ -27,6 +28,7 @@ app.route('/calls', callsRouter);
 app.route('/stats', statsRouter);
 app.route('/agents', agentsRouter);
 app.route('/api-keys', apiKeysRouter);
+app.route('/policies', policiesRouter);
 
 // Global Error and Not Found Handlers
 app.onError(errorHandler);
