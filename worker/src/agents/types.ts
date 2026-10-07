@@ -70,6 +70,12 @@ export const AgentDefinitionSchema = z.object({
   mcp_servers: z.array(AgentMcpServerSchema).default([]),
   memory: AgentMemoryConfigSchema.default({}),
   knowledge: AgentKnowledgeConfigSchema.default({}),
+  data: z.object({
+    policy_connection_id: z.string().min(1).optional(),
+    knowledge_connection_id: z.string().min(1).optional(),
+    memory_connection_id: z.string().min(1).optional(),
+    observability_connection_id: z.string().min(1).optional(),
+  }).default({}),
   metadata: z.record(z.string(), z.string()).default({}),
 });
 
