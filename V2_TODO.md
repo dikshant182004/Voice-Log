@@ -5,91 +5,91 @@ Base: `main`
 Goal: evolve Voice-Log from a low-latency voice call logger into a configurable, multi-tenant voice-agent platform without compromising the real-time audio hot path.
 
 ## 0. Engineering rules
-- [ ] Preserve WebRTC/Pipecat audio path as the latency-critical hot path.
-- [ ] No database/network/tool/MCP call may block audio processing.
-- [ ] Prefer streaming and parallel work wherever possible.
-- [ ] Keep agent runtime provider-agnostic behind explicit interfaces.
-- [ ] Use strict schemas and typed contracts at boundaries.
-- [ ] Pin/review current stable dependency versions before each dependency migration.
-- [ ] Add tests before/alongside behavior changes.
-- [ ] Keep every milestone independently buildable and committed.
+- [x] Preserve WebRTC/Pipecat audio path as the latency-critical hot path.
+- [x] No database/network/tool/MCP call may block audio processing.
+- [x] Prefer streaming and parallel work wherever possible.
+- [x] Keep agent runtime provider-agnostic behind explicit interfaces.
+- [x] Use strict schemas and typed contracts at boundaries.
+- [x] Pin/review current stable dependency versions before each dependency migration.
+- [x] Add tests before/alongside behavior changes.
+- [x] Keep every milestone independently buildable and committed.
 
 ## 1. Baseline + dependency modernization
 - [x] Capture current build/test baseline.
 - [x] Audit root, Worker, and Python dependency versions against current official releases/docs.
-- [ ] Upgrade only compatible stable releases; avoid speculative major upgrades.
-- [ ] Refresh lockfiles where applicable.
-- [ ] Add dependency/version documentation and upgrade policy.
-- [ ] Add CI checks for typecheck, frontend build, Worker tests, Python tests, and eval gate.
+- [x] Upgrade only compatible stable releases; avoid speculative major upgrades.
+- [x] Refresh lockfiles where applicable.
+- [x] Add dependency/version documentation and upgrade policy.
+- [x] Add CI checks for typecheck, frontend build, Worker tests, Python tests, and eval gate.
 
 ## 2. Agent Harness core
 - [x] Introduce typed AgentDefinition schema.
 - [x] Add AgentRuntime with lifecycle, streaming response, cancellation, and error contracts.
 - [x] Separate agent identity, instructions, persona, model config, voice config, policies, tools, MCP, knowledge, and memory.
-- [ ] Add provider interfaces for LLM/STT/TTS.
-- [ ] Add deterministic config resolution/validation.
-- [ ] Add per-request runtime context: tenant, agent, user/session, request/call IDs.
-- [ ] Ensure runtime is stateless by default and safe for concurrent sessions.
-- [ ] Add unit tests for config merge, validation, cancellation, and failure behavior.
+- [x] Add provider interfaces for LLM/STT/TTS.
+- [x] Add deterministic config resolution/validation.
+- [x] Add per-request runtime context: tenant, agent, user/session, request/call IDs.
+- [x] Ensure runtime is stateless by default and safe for concurrent sessions.
+- [x] Add unit tests for config merge, validation, cancellation, and failure behavior.
 
 ## 3. Low-latency voice runtime
-- [ ] Preserve Pipecat streaming architecture.
+- [x] Preserve Pipecat streaming architecture.
 - [ ] Tune VAD/STT endpointing/turn-stop behavior from measured latency rather than guesses.
 - [ ] Stream LLM tokens directly into TTS where provider semantics permit.
 - [ ] Support barge-in/cancellation cleanly.
-- [ ] Avoid synchronous persistence/tool execution in the media path.
+- [x] Avoid synchronous persistence/tool execution in the media path.
 - [ ] Add latency budgets and regression thresholds.
-- [ ] Track p50/p95/p99 for speech-end → STT → LLM TTFB → TTS TTFB → first audio.
+- [x] Track p50/p95/p99 for speech-end → STT → LLM TTFB → TTS TTFB → first audio.
 - [ ] Add provider timeout/fallback policy without adding avoidable latency.
 - [ ] Add load/concurrency smoke tests.
 
 ## 4. Agent configuration + versioning
 - [x] Persist agent definitions remotely.
 - [x] Support draft/test/published versions.
-- [ ] Add immutable published agent versions.
+- [x] Add immutable published agent versions.
 - [ ] Add environment-specific configuration.
-- [ ] Add configurable system prompt/persona/voice/model/tool policy.
+- [x] Add configurable system prompt/persona/voice/model/tool policy.
 - [ ] Add agent cloning.
 - [ ] Add safe config rollout/rollback.
 
 ## 5. Remote policy layer
 - [x] Create policy schema.
-- [ ] Support brand voice, allowed topics, forbidden topics, escalation rules, response limits, data permissions, tool permissions, compliance rules.
-- [ ] Implement policy resolver with deterministic precedence.
-- [ ] Cache active policies per agent/version.
-- [ ] Never fetch remote policy synchronously for every audio turn when cached.
+- [x] Support brand voice, allowed topics, forbidden topics, escalation rules, response limits, data permissions, tool permissions, compliance rules.
+- [x] Implement policy resolver with deterministic precedence.
+- [x] Cache active policies per agent/version.
+- [x] Never fetch remote policy synchronously for every audio turn when cached.
 - [ ] Add policy versioning and audit history.
 - [ ] Add policy compliance evals.
 
 ## 6. Tools + MCP
 - [x] Define typed Tool interface.
 - [x] Add tool registry.
-- [ ] Add permission/capability checks before execution.
-- [ ] Add timeout, cancellation, retry, and result-size limits.
+- [x] Add permission/capability checks before execution.
+- [x] Add timeout, cancellation, retry, and result-size limits.
 - [x] Add MCP client abstraction.
-- [ ] Support configurable MCP servers per agent/tenant.
-- [ ] Keep tool execution off the real-time audio critical path where possible.
+- [x] Support configurable MCP servers per agent/tenant.
+- [x] Keep tool execution off the real-time audio critical path where possible.
 - [ ] Stream tool progress/status to the UI.
 - [ ] Add tool-call tracing.
 - [ ] Add tests for malicious/invalid tool inputs and permission failures.
 
 ## 7. Memory
 - [x] Separate session memory from long-term memory.
-- [ ] Define structured memory records with provenance and timestamps.
-- [ ] Add user/profile memory.
+- [x] Define structured memory records with provenance and timestamps.
+- [x] Add user/profile memory.
 - [ ] Add agent/company memory where appropriate.
-- [ ] Add memory retrieval policy and token budget.
+- [x] Add memory retrieval policy and token budget.
 - [ ] Add write/update/delete semantics and conflict handling.
-- [ ] Cache hot session context.
-- [ ] Never inject untrusted memory as higher-priority instructions.
+- [x] Cache hot session context.
+- [x] Never inject untrusted memory as higher-priority instructions.
 - [ ] Add memory quality and leakage tests.
 
 ## 8. Knowledge / RAG
 - [x] Add knowledge-source abstraction.
-- [ ] Support documents/FAQs/web content ingestion.
+- [x] Support documents/FAQs/web content ingestion.
 - [ ] Chunk, embed, index, and retrieve with metadata filters.
 - [ ] Prefer Postgres + pgvector initially unless measured scale requires another store.
-- [ ] Add tenant/agent isolation to every retrieval query.
+- [x] Add tenant/agent isolation to every retrieval query.
 - [ ] Add citations/provenance to retrieved context.
 - [ ] Add retrieval latency telemetry.
 - [ ] Add groundedness evals.
@@ -101,19 +101,19 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add authentication and authorization middleware.
 - [ ] Add API keys/service credentials for agent integrations.
 - [ ] Add rate limits and quotas.
-- [ ] Add tenant-safe data access tests.
+- [x] Add tenant-safe data access tests.
 
 ## 10. API + SDK
-- [ ] Version the public API.
-- [ ] Add agent CRUD/version endpoints.
-- [ ] Add text message endpoint.
-- [ ] Add voice/session endpoint.
+- [x] Version the public API.
+- [x] Add agent CRUD/version endpoints.
+- [x] Add text message endpoint.
+- [x] Add voice/session endpoint.
 - [ ] Add streaming response transport.
-- [ ] Add tool/MCP configuration endpoints.
-- [ ] Add knowledge ingestion endpoints.
-- [ ] Add memory endpoints where appropriate.
+- [x] Add tool/MCP configuration endpoints.
+- [x] Add knowledge ingestion endpoints.
+- [x] Add memory endpoints where appropriate.
 - [ ] Generate/maintain TypeScript contracts.
-- [ ] Add minimal JS/TS client SDK example.
+- [x] Add minimal JS/TS client SDK example.
 
 ## 11. Agent Builder + Playground
 - [x] Agent creation/editing UI.
@@ -125,7 +125,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Memory controls.
 - [ ] Test/publish workflow.
 - [ ] Live voice playground.
-- [ ] Text playground.
+- [x] Text playground.
 - [ ] Execution trace with latency, retrieval, memory, and tool events.
 
 ## 12. Observability
@@ -145,26 +145,26 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add release gate for agent versions.
 
 ## 14. Production deployment
-- [ ] Containerize Pipecat bot.
-- [ ] Add health/readiness endpoints.
+- [x] Containerize Pipecat bot.
+- [x] Add health/readiness endpoints.
 - [ ] Add horizontal scaling strategy.
 - [ ] Place bot/inference infrastructure geographically for latency.
 - [ ] Deploy frontend.
 - [ ] Deploy Worker/API.
 - [ ] Configure database/vector storage.
 - [ ] Add secrets management.
-- [ ] Add migrations and rollback strategy.
-- [ ] Add CI/CD for v2.
+- [x] Add migrations and rollback strategy.
+- [x] Add CI/CD for v2.
 
 ## 15. Product polish
 - [ ] Landing page explaining platform value.
 - [ ] Demo agents: Marketing, Sales, Support.
 - [ ] Agent onboarding flow.
 - [ ] Usage/cost dashboard.
-- [ ] API documentation.
-- [ ] Architecture documentation.
-- [ ] Production troubleshooting guide.
-- [ ] Resume/project documentation with measured benchmarks.
+- [x] API documentation.
+- [x] Architecture documentation.
+- [x] Production troubleshooting guide.
+- [x] Resume/project documentation with measured benchmarks.
 
 ## Commit sequence
 1. chore(v2): establish baseline and dependency policy
