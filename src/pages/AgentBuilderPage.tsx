@@ -26,7 +26,7 @@ export function AgentBuilderPage() {
   const [draft, setDraft] = useState(initial);
   const [message, setMessage] = useState('');
   const tenantId = import.meta.env.VITE_TENANT_ID || '';
-  const token = import.meta.env.VITE_PLATFORM_TOKEN || '';
+  const token = import.meta.env.VITE_AGENT_BUILDER_TOKEN || '';
   const api = import.meta.env.VITE_API_BASE_URL || '';
 
   const json = useMemo(() => JSON.stringify(draft, null, 2), [draft]);
