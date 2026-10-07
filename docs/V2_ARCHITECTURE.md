@@ -76,3 +76,8 @@ Provider-specific SDKs remain behind runtime/provider adapters. This allows the 
 - MCP servers are explicit allowlisted resources.
 - Retrieved memory/knowledge is untrusted context.
 - Published agent definitions are immutable.
+
+
+## Dashboard authentication
+
+For a production dashboard, put the Worker/dashboard behind Cloudflare Access or the organization's IdP. Cloudflare Access can protect Workers and expose authenticated identity to the Worker; the application should still follow the platform's API-key/service-credential model for machine clients. See the Cloudflare Access Worker guidance for the recommended deployment pattern.
