@@ -8,11 +8,11 @@ version = "1.0.0"
 description = "Pipecat WebRTC Voice AI bot for Mini Call Log Service"
 authors = [{ name = "Voice AI Engineer" }]
 dependencies = [
-    "fastapi>=0.110.0",
-    "uvicorn>=0.30.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.2.0",
+    "fastapi==0.142.2",
+    "uvicorn==0.53.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
 ]
 
 [tool.pytest.ini_options]
