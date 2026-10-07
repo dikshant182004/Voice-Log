@@ -122,7 +122,7 @@ runtimeRouter.post('/respond', async (c) => {
   const persistExternalRun = async () => {
     if (!definition.observability.enabled || !definition.observability.connection_id || definition.observability.mode === 'd1' || !definition.observability.events.includes('agent_run')) return;
     const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), definition.observability.connection_id);
-    if (!connection) return;
+    if (!connection || connection.type !== 'webhook') return;
     const event = {
       event: 'agent_run',
       created_at: new Date().toISOString(),
