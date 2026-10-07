@@ -88,17 +88,21 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [x] Add knowledge-source abstraction.
 - [x] Support documents/FAQs/web content ingestion.
 - [ ] Chunk, embed, index, and retrieve with metadata filters.
-- [ ] Prefer Postgres + pgvector initially unless measured scale requires another store.
+- [x] Add pluggable knowledge-provider contract with D1 fallback.
+- [x] Add customer-owned HTTP vector/search adapter for Pinecone/Qdrant/Weaviate/pgvector gateways.
+- [ ] Add first-party direct vector-provider SDK adapters.
 - [x] Add tenant/agent isolation to every retrieval query.
 - [ ] Add citations/provenance to retrieved context.
 - [ ] Add retrieval latency telemetry.
 - [ ] Add groundedness evals.
 
 ## 9. Multi-tenancy + auth
+- [x] Add tenant-scoped integration connection registry.
 - [ ] Add organizations/tenants.
 - [ ] Add users and memberships/roles.
 - [ ] Scope agents, policies, knowledge, memory, tools, calls, and usage by tenant.
-- [ ] Add authentication and authorization middleware.
+- [x] Add authentication and authorization middleware.
+- [x] Add customer-owned policy/data HTTP adapter and per-agent policy connection selection.
 - [ ] Add API keys/service credentials for agent integrations.
 - [ ] Add rate limits and quotas.
 - [x] Add tenant-safe data access tests.
@@ -123,6 +127,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Tool/MCP configuration.
 - [ ] Knowledge upload/management.
 - [ ] Memory controls.
+- [x] Add connection references for external memory adapters.
 - [ ] Test/publish workflow.
 - [ ] Live voice playground.
 - [x] Text playground.
@@ -133,6 +138,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add structured agent execution traces.
 - [ ] Record latency, token usage, tool calls, retrievals, errors, cancellations.
 - [ ] Add tenant/agent/version dimensions.
+- [x] Add configurable external observability sink and per-agent log field selection.
 - [ ] Add dashboards for latency, reliability, usage, and cost.
 - [ ] Add privacy-aware logging/redaction.
 
@@ -151,7 +157,8 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Place bot/inference infrastructure geographically for latency.
 - [ ] Deploy frontend.
 - [ ] Deploy Worker/API.
-- [ ] Configure database/vector storage.
+- [x] Add configurable customer-owned policy, knowledge, memory, and observability connection references.
+- [ ] Configure production database/vector storage.
 - [ ] Add secrets management.
 - [x] Add migrations and rollback strategy.
 - [x] Add CI/CD for v2.
