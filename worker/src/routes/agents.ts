@@ -1,27 +1,23 @@
 import { Hono } from 'hono';
 import { agentRepo } from '../agents/repository';
 import { AgentDefinitionSchema } from '../agents/types';
-import { requireIngestAuth } from '../middleware/auth';
+import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
 
 interface Env {
   DB: import('../db').D1Database;
   INGEST_TOKEN?: string;
 }
 
-export const agentsRouter = new Hono<{ Bindings: Env; Variables: { requestId: string } }>();
-
-function tenantId(c: any): string | null {
-  return c.req.header('X-Tenant-ID')?.trim() || null;
-}
+export const agentsRouter = new Hono<{ Bindings: Env; Variables: { requestId: string; tenantId: string } }>();
 
 agentsRouter.use('*', requireIngestAuth);
+agentsRouter.use('*', requireTenantHeader());
 
 agentsRouter.post('/', async (c) => {
-  const tenant = tenantId(c);
-  if (!tenant) return c.json({ error: { code: 'TENANT_REQUIRED', message: 'X-Tenant-ID is required', request_id: c.get('requestId') } }, 400);
-
+  const tenant = c.get('tenantId');
   const body = await c.req.json().catch(() => null);
   const parsed = AgentDefinitionSchema.safeParse(body);
+
   if (!parsed.success) {
     return c.json({
       error: {
@@ -46,30 +42,25 @@ agentsRouter.post('/', async (c) => {
 });
 
 agentsRouter.get('/:id', async (c) => {
-  const tenant = tenantId(c);
-  if (!tenant) return c.json({ error: { code: 'TENANT_REQUIRED', message: 'X-Tenant-ID is required', request_id: c.get('requestId') } }, 400);
-
   const versionParam = c.req.query('version');
   const version = versionParam === undefined ? undefined : Number(versionParam);
+
   if (versionParam !== undefined && (!Number.isInteger(version) || version < 1)) {
     return c.json({ error: { code: 'INVALID_VERSION', message: 'version must be a positive integer', request_id: c.get('requestId') } }, 400);
   }
 
-  const agent = await agentRepo.get(c.env.DB, tenant, c.req.param('id'), version);
+  const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), c.req.param('id'), version);
   if (!agent) return c.json({ error: { code: 'AGENT_NOT_FOUND', message: 'Agent not found', request_id: c.get('requestId') } }, 404);
   return c.json(agent);
 });
 
 agentsRouter.post('/:id/versions/:version/publish', async (c) => {
-  const tenant = tenantId(c);
-  if (!tenant) return c.json({ error: { code: 'TENANT_REQUIRED', message: 'X-Tenant-ID is required', request_id: c.get('requestId') } }, 400);
-
   const version = Number(c.req.param('version'));
   if (!Number.isInteger(version) || version < 1) {
     return c.json({ error: { code: 'INVALID_VERSION', message: 'version must be a positive integer', request_id: c.get('requestId') } }, 400);
   }
 
-  const agent = await agentRepo.publish(c.env.DB, tenant, c.req.param('id'), version);
+  const agent = await agentRepo.publish(c.env.DB, c.get('tenantId'), c.req.param('id'), version);
   if (!agent) return c.json({ error: { code: 'AGENT_NOT_FOUND', message: 'Agent version not found', request_id: c.get('requestId') } }, 404);
   return c.json(agent);
 });
