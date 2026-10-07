@@ -51,9 +51,9 @@ function decodeCursor(cursor: string): { startedAt: string; id: string } | null 
 
 export interface CallRepository {
   insertCall(db: D1Database, payload: PostCallPayload): Promise<{ duplicate: boolean; callId: string }>;
-  listCalls(db: D1Database, limit: number, cursor?: string): Promise<CallsListResponse>;
-  getCallById(db: D1Database, callId: string): Promise<CallDetailResponse | null>;
-  getStats(db: D1Database, days: number): Promise<CallStatsResponse>;
+  listCalls(db: D1Database, tenantId: string, limit: number, cursor?: string): Promise<CallsListResponse>;
+  getCallById(db: D1Database, tenantId: string, callId: string): Promise<CallDetailResponse | null>;
+  getStats(db: D1Database, tenantId: string, days: number): Promise<CallStatsResponse>;
   insertEval(db: D1Database, evaluation: CallEval): Promise<void>;
 }
 
@@ -82,14 +82,18 @@ export const callRepo: CallRepository = {
       db
         .prepare(
           `INSERT INTO calls (
-            id, started_at, ended_at, duration_ms, status, end_reason,
+            id, tenant_id, agent_id, agent_version, user_id, started_at, ended_at, duration_ms, status, end_reason,
             config_json, turn_count, interruption_count, p50_v2v_ms, p95_v2v_ms,
             usage_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING`
         )
         .bind(
           callId,
+          payload.tenant_id,
+          payload.agent_id ?? null,
+          payload.agent_version ?? null,
+          payload.user_id ?? null,
           payload.started_at,
           payload.ended_at,
           payload.duration_ms,
@@ -148,7 +152,7 @@ export const callRepo: CallRepository = {
     return { duplicate: isDuplicate, callId };
   },
 
-  async listCalls(db: D1Database, limit: number, cursor?: string): Promise<CallsListResponse> {
+  async listCalls(db: D1Database, tenantId: string, limit: number, cursor?: string): Promise<CallsListResponse> {
     const clampedLimit = Math.max(1, Math.min(limit, 100));
     const decodedCursor = cursor ? decodeCursor(cursor) : null;
 
@@ -162,11 +166,11 @@ export const callRepo: CallRepository = {
                e.summary AS summary
         FROM calls c
         LEFT JOIN call_evals e ON c.id = e.call_id
-        WHERE (c.started_at < ?) OR (c.started_at = ? AND c.id < ?)
+        WHERE c.tenant_id = ? AND ((c.started_at < ?) OR (c.started_at = ? AND c.id < ?))
         ORDER BY c.started_at DESC, c.id DESC
         LIMIT ?
       `;
-      bindings = [decodedCursor.startedAt, decodedCursor.startedAt, decodedCursor.id, clampedLimit + 1];
+      bindings = [tenantId, decodedCursor.startedAt, decodedCursor.startedAt, decodedCursor.id, clampedLimit + 1];
     } else {
       query = `
         SELECT c.id, c.started_at, c.duration_ms, c.status, c.end_reason,
@@ -174,10 +178,11 @@ export const callRepo: CallRepository = {
                e.summary AS summary
         FROM calls c
         LEFT JOIN call_evals e ON c.id = e.call_id
+        WHERE c.tenant_id = ?
         ORDER BY c.started_at DESC, c.id DESC
         LIMIT ?
       `;
-      bindings = [clampedLimit + 1];
+      bindings = [tenantId, clampedLimit + 1];
     }
 
     const { results } = await db.prepare(query).bind(...bindings).all<any>();
@@ -206,16 +211,16 @@ export const callRepo: CallRepository = {
     };
   },
 
-  async getCallById(db: D1Database, callId: string): Promise<CallDetailResponse | null> {
+  async getCallById(db: D1Database, tenantId: string, callId: string): Promise<CallDetailResponse | null> {
     // Explicit columns instead of SELECT *
     const callRow = await db
       .prepare(
         `SELECT id, started_at, ended_at, duration_ms, status, end_reason,
                 config_json, turn_count, interruption_count, p50_v2v_ms, p95_v2v_ms,
                 usage_json, created_at
-         FROM calls WHERE id = ? LIMIT 1`
+         FROM calls WHERE id = ? AND tenant_id = ? LIMIT 1`
       )
-      .bind(callId)
+      .bind(callId, tenantId)
       .first<any>();
 
     if (!callRow) {
@@ -325,7 +330,7 @@ export const callRepo: CallRepository = {
     };
   },
 
-  async getStats(db: D1Database, days: number): Promise<CallStatsResponse> {
+  async getStats(db: D1Database, tenantId: string, days: number): Promise<CallStatsResponse> {
     const windowDays = Math.max(1, Math.min(days, 90));
     const sinceDate = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
 
@@ -338,9 +343,9 @@ export const callRepo: CallRepository = {
         SUM(interruption_count) as total_interruptions,
         SUM(turn_count) as total_turns
       FROM calls
-      WHERE started_at >= ?
+      WHERE tenant_id = ? AND started_at >= ?
     `;
-    const summaryRow = await db.prepare(summaryQuery).bind(sinceDate).first<any>();
+    const summaryRow = await db.prepare(summaryQuery).bind(tenantId, sinceDate).first<any>();
 
     const totalCalls = Number(summaryRow?.total_calls || 0);
     const completedCalls = Number(summaryRow?.completed_calls || 0);
@@ -359,11 +364,11 @@ export const callRepo: CallRepository = {
         COUNT(*) as call_count,
         AVG(duration_ms) as avg_duration_ms
       FROM calls
-      WHERE started_at >= ?
+      WHERE tenant_id = ? AND started_at >= ?
       GROUP BY SUBSTR(started_at, 1, 10)
       ORDER BY date ASC
     `;
-    const dailyRows = await db.prepare(dailyVolumeQuery).bind(sinceDate).all<any>();
+    const dailyRows = await db.prepare(dailyVolumeQuery).bind(tenantId, sinceDate).all<any>();
     const dailyVolume = (dailyRows.results || []).map((r: any) => ({
       date: r.date,
       call_count: Number(r.call_count),
@@ -373,19 +378,19 @@ export const callRepo: CallRepository = {
     // Bounded ordered slices for percentile calculations (up to 1000 rows each)
     const [v2vRows, sttRows, llmRows, ttsRows] = await Promise.all([
       db
-        .prepare(`SELECT m.voice_to_voice_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.voice_to_voice_ms IS NOT NULL ORDER BY m.voice_to_voice_ms ASC LIMIT 1000`)
+        .prepare(`SELECT m.voice_to_voice_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.voice_to_voice_ms IS NOT NULL ORDER BY m.voice_to_voice_ms ASC LIMIT 1000`)
         .bind(sinceDate)
         .all<any>(),
       db
-        .prepare(`SELECT m.stt_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.stt_ms IS NOT NULL ORDER BY m.stt_ms ASC LIMIT 1000`)
+        .prepare(`SELECT m.stt_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.stt_ms IS NOT NULL ORDER BY m.stt_ms ASC LIMIT 1000`)
         .bind(sinceDate)
         .all<any>(),
       db
-        .prepare(`SELECT m.llm_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.llm_ttfb_ms IS NOT NULL ORDER BY m.llm_ttfb_ms ASC LIMIT 1000`)
+        .prepare(`SELECT m.llm_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.llm_ttfb_ms IS NOT NULL ORDER BY m.llm_ttfb_ms ASC LIMIT 1000`)
         .bind(sinceDate)
         .all<any>(),
       db
-        .prepare(`SELECT m.tts_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.started_at >= ? AND m.tts_ttfb_ms IS NOT NULL ORDER BY m.tts_ttfb_ms ASC LIMIT 1000`)
+        .prepare(`SELECT m.tts_ttfb_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.tts_ttfb_ms IS NOT NULL ORDER BY m.tts_ttfb_ms ASC LIMIT 1000`)
         .bind(sinceDate)
         .all<any>(),
     ]);
