@@ -1,91 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-type AgentDraft = {
-  id: string;
-  version: number;
-  name: string;
-  description: string;
-  system_instructions: string;
-  persona: string;
-  model: { provider: string; model: string; temperature: number; max_output_tokens: number; reasoning_effort: 'none'|'low'|'medium'|'high' };
-  voice: { provider: string; voice_id: string; sample_rate: number; language: string } | null;
-};
+type AgentDraft={id:string;version:number;name:string;description:string;system_instructions:string;persona:string;model:any;voice:any;policies:any;tools:any[];mcp_servers:any[];memory:any;knowledge:any;observability:any;data:any;metadata:any};
+const initial:AgentDraft={id:'marketing',version:1,name:'Marketing Agent',description:'Domain-specific company marketing assistant',system_instructions:'Help the user with marketing questions. Be accurate and concise.',persona:'Helpful, confident marketing strategist.',model:{provider:'groq',model:'openai/gpt-oss-20b',temperature:.2,max_output_tokens:256,reasoning_effort:'low'},voice:null,policies:{policy_ids:[],max_response_tokens:256,allow_external_tools:false,allow_memory_write:true},tools:[],mcp_servers:[],memory:{enabled:true,session_max_turns:12,long_term_retrieval_limit:5},knowledge:{enabled:true,source_ids:[],retrieval_limit:5},observability:{enabled:true,mode:'d1',events:['call_started','call_ended','error','agent_run'],fields:['call_id','agent_id','agent_version','duration_ms','status','latency_ms','usage']},data:{},metadata:{}};
 
-const initial: AgentDraft = {
-  id: 'marketing',
-  version: 1,
-  name: 'Marketing Agent',
-  description: 'Domain-specific company marketing assistant',
-  system_instructions: 'Help the user with marketing questions. Be accurate and concise.',
-  persona: 'Helpful, confident marketing strategist.',
-  model: { provider: 'groq', model: 'openai/gpt-oss-20b', temperature: 0.2, max_output_tokens: 256, reasoning_effort: 'low' },
-  voice: null,
-};
-
-export function AgentBuilderPage() {
-  const [draft, setDraft] = useState(initial);
-  const [message, setMessage] = useState('');
-  const tenantId = import.meta.env.VITE_TENANT_ID || '';
-  const token = import.meta.env.VITE_AGENT_BUILDER_TOKEN || '';
-  const api = import.meta.env.VITE_API_BASE_URL || '';
-
-  const json = useMemo(() => JSON.stringify(draft, null, 2), [draft]);
-
-  async function save() {
-    setMessage('');
-    try {
-      const response = await fetch(api.replace(/\/+$/, '') + '/agents', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + token,
-          'X-Tenant-ID': tenantId,
-        },
-        body: json,
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message || 'Unable to save agent');
-      setMessage('Draft saved as version ' + data.version + '.');
-    } catch (error: any) {
-      setMessage(error?.message || 'Unable to save agent');
-    }
-  }
-
-  return (
-    <section className="space-y-6">
-      <div>
-        <p className="text-xs uppercase tracking-widest text-neutral-500">Agent Platform</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Agent Builder</h1>
-        <p className="mt-2 text-sm text-neutral-600">Configure an agent once; the runtime can reuse it for voice and text channels.</p>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
-          {[
-            ['id','Agent ID'], ['name','Name'], ['description','Description'], ['persona','Persona'], ['system_instructions','System instructions'],
-          ].map(([key,label]) => (
-            <label key={key} className="block text-sm">
-              <span className="mb-1 block font-medium">{label}</span>
-              {key === 'system_instructions' || key === 'description' || key === 'persona' ? (
-                <textarea className="min-h-24 w-full rounded-lg border border-neutral-300 p-3" value={(draft as any)[key]} onChange={e => setDraft({...draft, [key]: e.target.value})} />
-              ) : (
-                <input className="w-full rounded-lg border border-neutral-300 p-3" value={(draft as any)[key]} onChange={e => setDraft({...draft, [key]: e.target.value})} />
-              )}
-            </label>
-          ))}
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">Model<input className="mt-1 w-full rounded-lg border p-3" value={draft.model.model} onChange={e=>setDraft({...draft,model:{...draft.model,model:e.target.value}})} /></label>
-            <label className="text-sm">Temperature<input type="number" step="0.1" min="0" max="2" className="mt-1 w-full rounded-lg border p-3" value={draft.model.temperature} onChange={e=>setDraft({...draft,model:{...draft.model,temperature:Number(e.target.value)}})} /></label>
-          </div>
-          <button onClick={save} className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white">Save draft</button>
-          {message && <p className="text-sm text-neutral-600">{message}</p>}
-        </div>
-
-        <div className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-neutral-100">
-          <div className="mb-3 text-xs uppercase tracking-widest text-neutral-400">Definition preview</div>
-          <pre className="overflow-auto text-xs leading-5">{json}</pre>
-        </div>
-      </div>
-    </section>
-  );
+export function AgentBuilderPage(){
+ const[draft,setDraft]=useState(initial);const[message,setMessage]=useState('');const[connections,setConnections]=useState<any[]>([]);
+ const api=(import.meta.env.VITE_API_BASE_URL||'').replace(/\/+$/,'');const tenantId=import.meta.env.VITE_TENANT_ID||'';const token=import.meta.env.VITE_AGENT_BUILDER_TOKEN||'';
+ useEffect(()=>{fetch(api+'/v1/connections',{headers:{Authorization:'Bearer '+token,'X-Tenant-ID':tenantId}}).then(r=>r.json()).then(d=>setConnections(d.items||[])).catch(()=>{})},[]);
+ const json=useMemo(()=>JSON.stringify(draft,null,2),[draft]);
+ const save=async()=>{setMessage('');try{const r=await fetch(api+'/agents',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,'X-Tenant-ID':tenantId},body:json});const d=await r.json();if(!r.ok)throw new Error(d?.error?.message||'Unable to save agent');setMessage('Draft saved as version '+d.version+'.')}catch(e:any){setMessage(e.message||'Unable to save agent')}};
+ const opts=(type:string)=><><option value="">Voice-Log default</option>{connections.filter(c=>type==='vector'?c.type==='vector_rest':type==='obs'?c.type==='webhook':c.type==='http_json').map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</>;
+ const selectData=(key:string,label:string,type:string)=><label className="block text-sm">{label}<select className="mt-1 w-full rounded-lg border p-3" value={draft.data[key]||''} onChange={e=>setDraft({...draft,data:{...draft.data,[key]:e.target.value||undefined}})}>{opts(type)}</select></label>;
+ return <section className="space-y-6"><div><p className="text-xs uppercase tracking-widest text-neutral-500">Agent Platform</p><h1 className="text-3xl font-semibold tracking-tight">Agent Builder</h1><p className="mt-2 text-sm text-neutral-600">Configure behavior and attach customer-owned data infrastructure.</p></div>
+ <div className="grid gap-6 lg:grid-cols-2"><div className="space-y-4 rounded-2xl border bg-white p-5">
+ {(['id','name','description','persona','system_instructions'] as const).map(k=><label key={k} className="block text-sm"><span className="mb-1 block font-medium">{k.replaceAll('_',' ')}</span>{k==='system_instructions'||k==='description'||k==='persona'?<textarea className="min-h-20 w-full rounded-lg border p-3" value={draft[k]} onChange={e=>setDraft({...draft,[k]:e.target.value})}/>:<input className="w-full rounded-lg border p-3" value={draft[k]} onChange={e=>setDraft({...draft,[k]:e.target.value})}/>}</label>)}
+ <div className="grid grid-cols-2 gap-3"><label className="text-sm">Model<input className="mt-1 w-full rounded-lg border p-3" value={draft.model.model} onChange={e=>setDraft({...draft,model:{...draft.model,model:e.target.value}})}/></label><label className="text-sm">Temperature<input type="number" step=".1" min="0" max="2" className="mt-1 w-full rounded-lg border p-3" value={draft.model.temperature} onChange={e=>setDraft({...draft,model:{...draft.model,temperature:Number(e.target.value)}})}/></label></div>
+ <div className="rounded-xl border p-4 space-y-3"><h2 className="font-semibold">Data providers</h2>{selectData('policy_connection_id','Remote policies','http')}{selectData('knowledge_connection_id','Semantic knowledge','vector')}{selectData('memory_connection_id','External memory','http')}</div>
+ <div className="rounded-xl border p-4 space-y-3"><h2 className="font-semibold">Call logging</h2><label className="flex gap-2 text-sm items-center"><input type="checkbox" checked={draft.observability.enabled} onChange={e=>setDraft({...draft,observability:{...draft.observability,enabled:e.target.checked}})}/> Enable logging</label><select className="w-full rounded-lg border p-3" value={draft.observability.mode} onChange={e=>setDraft({...draft,observability:{...draft.observability,mode:e.target.value}})}><option value="d1">Voice-Log D1</option><option value="external">Customer sink only</option><option value="both">D1 + customer sink</option></select><label className="block text-sm">External sink<select className="mt-1 w-full rounded-lg border p-3" value={draft.observability.connection_id||''} onChange={e=>setDraft({...draft,observability:{...draft.observability,connection_id:e.target.value||undefined},data:{...draft.data,observability_connection_id:e.target.value||undefined}})}>{opts('obs')}</select></label><label className="block text-sm">Export fields<textarea className="mt-1 min-h-20 w-full rounded-lg border p-3 font-mono text-xs" value={draft.observability.fields.join(', ')} onChange={e=>setDraft({...draft,observability:{...draft.observability,fields:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)}})}/></label><label className="block text-sm">Retention days<input type="number" min="1" className="mt-1 w-full rounded-lg border p-3" value={draft.observability.retention_days||''} onChange={e=>setDraft({...draft,observability:{...draft.observability,retention_days:e.target.value?Number(e.target.value):undefined}})}/></label></div>
+ <button onClick={save} className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white">Save draft</button>{message&&<p className="text-sm text-neutral-600">{message}</p>}
+ </div><div className="rounded-2xl border bg-neutral-950 p-5 text-neutral-100"><div className="mb-3 text-xs uppercase tracking-widest text-neutral-400">Definition preview</div><pre className="overflow-auto text-xs leading-5">{json}</pre></div></div></section>;
 }
