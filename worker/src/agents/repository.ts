@@ -52,7 +52,11 @@ export const agentRepo = {
 
   async get(db: D1Database, tenantId: string, agentId: string, version?: number, publishedOnly = false): Promise<StoredAgent | null> {
     const statement = version === undefined
-      ? db.prepare('SELECT * FROM agents WHERE tenant_id = ? AND id = ? ORDER BY version DESC LIMIT 1').bind(tenantId, agentId)
+      ? db.prepare(
+          publishedOnly
+            ? 'SELECT * FROM agents WHERE tenant_id = ? AND id = ? AND status = \'published\' LIMIT 1'
+            : 'SELECT * FROM agents WHERE tenant_id = ? AND id = ? ORDER BY version DESC LIMIT 1'
+        ).bind(tenantId, agentId)
       : db.prepare('SELECT * FROM agents WHERE tenant_id = ? AND id = ? AND version = ? LIMIT 1').bind(tenantId, agentId, version);
     const row = await statement.first<any>();
     return row ? decode(row) : null;
