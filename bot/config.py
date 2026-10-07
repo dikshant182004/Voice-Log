@@ -37,6 +37,8 @@ class BotSettings(BaseSettings):
     tts_sample_rate: int = Field(default=24000)
 
     worker_base_url: str = Field(default="http://localhost:8787")
+    default_agent_id: Optional[str] = Field(default=None)
+    default_tenant_id: Optional[str] = Field(default=None)
     ingest_token: str = Field(default="")
 
     # VAD marks the speech boundary. SpeechTimeout then gives STT a short
