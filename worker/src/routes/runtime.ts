@@ -7,6 +7,8 @@ import { buildKnowledgeContext } from '../knowledge/types';
 import { generateGroqResponse } from '../runtime/groq';
 import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
 import { resolvePolicyProvider, resolveMemoryProvider, resolveKnowledgeProvider } from '../providers/resolve';
+import { connectionRepo } from '../connections/types';
+import { writeRemoteEvent } from '../providers/remote';
 
 interface Env {
   DB: import('../db').D1Database;
@@ -116,6 +118,33 @@ runtimeRouter.post('/respond', async (c) => {
   ).run();
   const executionCtx = c.executionCtx as { waitUntil?: (promise: Promise<unknown>) => void };
   executionCtx?.waitUntil?.(persistRun);
+
+  const persistExternalRun = async () => {
+    if (!definition.observability.enabled || !definition.observability.connection_id || definition.observability.mode === 'd1') return;
+    const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), definition.observability.connection_id);
+    if (!connection) return;
+    const event = {
+      event: 'agent_run',
+      created_at: new Date().toISOString(),
+      fields: Object.fromEntries(
+        definition.observability.fields.map((field) => [field, ({
+          call_id: body.session_id || null,
+          agent_id: definition.id,
+          agent_version: definition.version,
+          duration_ms: null,
+          latency_ms: latencyMs,
+          status: 'completed',
+          usage: result.usage || null,
+          user_id: body.user_id || null,
+          session_id: body.session_id || null,
+          provider_request_id: result.provider_request_id || null,
+          channel: 'text',
+        } as Record<string, unknown>)[field]]).filter(([, value]) => value !== undefined)
+      ),
+    };
+    await writeRemoteEvent(c.env as unknown as Record<string, unknown>, connection, event);
+  };
+  executionCtx?.waitUntil?.(persistExternalRun());
 
   const persistMemory = async () => {
     if (!definition.memory.enabled || !definition.policies.allow_memory_write) return;
