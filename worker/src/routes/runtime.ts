@@ -85,7 +85,7 @@ runtimeRouter.post('/respond', async (c) => {
   const mcpAuthorizations = Object.fromEntries(
     definition.mcp_servers
       .filter((server) => server.enabled && server.auth_ref)
-      .map((server) => [server.auth_ref as string, String(env['MCP_AUTH_' + server.auth_ref!] || '')])
+      .map((server) => [server.auth_ref as string, String(env['MCP_AUTH_' + c.get('tenantId') + '_' + server.auth_ref!] || '')])
       .filter(([, value]) => Boolean(value))
   );
 
