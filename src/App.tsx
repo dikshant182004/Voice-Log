@@ -54,6 +54,8 @@ export function App() {
           <StatsPage />
         ) : currentTab === 'live' ? (
           <LiveCallView onCallFinished={handleCallFinished} />
+        ) : currentTab === 'agents' ? (
+          <AgentBuilderPage />
         ) : (
           <DevConsolePage />
         )}
