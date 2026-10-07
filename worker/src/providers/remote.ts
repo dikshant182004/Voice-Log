@@ -2,9 +2,10 @@ import type { Connection } from '../connections/types';
 import type { PolicyDefinition } from '../policy/types';
 import type { KnowledgeDocument } from '../knowledge/types';
 
-export function resolveConnectionSecret(env: Record<string, unknown>, connection: Connection): string | undefined {
+export function resolveConnectionSecret(env: Record<string, unknown>, connection: Connection, tenantId?: string): string | undefined {
   if (!connection.secret_ref) return undefined;
-  const value = env['CONNECTION_SECRET_' + connection.secret_ref];
+  const scopedKey = tenantId ? 'CONNECTION_SECRET_' + tenantId + '_' + connection.secret_ref : undefined;
+  const value = (scopedKey ? env[scopedKey] : undefined);
   return typeof value === 'string' && value.length ? value : undefined;
 }
 
@@ -14,6 +15,7 @@ async function requestJson(
   path: string,
   body: unknown,
   timeoutMs = 2500,
+  tenantId?: string,
 ): Promise<any> {
   if (!connection.enabled) throw new Error('Connection is disabled: ' + connection.id);
   const controller = new AbortController();
@@ -21,7 +23,7 @@ async function requestJson(
   try {
     const base = connection.base_url.endsWith('/') ? connection.base_url.slice(0, -1) : connection.base_url;
     const url = base + (path.startsWith('/') ? path : '/' + path);
-    const secret = resolveConnectionSecret(env, connection);
+    const secret = resolveConnectionSecret(env, connection, tenantId);
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (secret) headers.authorization = 'Bearer ' + secret;
     const response = await fetch(url, {
@@ -47,7 +49,7 @@ export async function fetchRemotePolicies(
   connection: Connection,
   input: { tenantId: string; agentId: string; policyIds: string[] },
 ): Promise<PolicyDefinition[]> {
-  const payload = await requestJson(env, connection, '/policies/resolve', input);
+  const payload = await requestJson(env, connection, '/policies/resolve', input, 2500, input.tenantId);
   return Array.isArray(payload?.items) ? payload.items as PolicyDefinition[] : [];
 }
 
@@ -60,7 +62,7 @@ export async function searchRemoteKnowledge(
   connection: Connection,
   input: { tenantId: string; agentId: string; query: string; limit: number; sourceIds?: string[] },
 ): Promise<KnowledgeDocument[]> {
-  const payload = await requestJson(env, connection, '/search', input, 3000);
+  const payload = await requestJson(env, connection, '/search', input, 3000, input.tenantId);
   return Array.isArray(payload?.items) ? payload.items as KnowledgeDocument[] : [];
 }
 
@@ -69,14 +71,14 @@ export async function writeRemoteEvent(
   connection: Connection,
   event: Record<string, unknown>,
 ): Promise<void> {
-  await requestJson(env, connection, '/events', event, 2500);
+  await requestJson(env, connection, '/events', event, 2500, typeof event.tenant_id === 'string' ? event.tenant_id : undefined);
 }
 
 export async function recallRemoteMemory(env: Record<string, unknown>, connection: Connection, input: { tenantId: string; agentId: string; userId?: string; limit: number }) {
-  const payload = await requestJson(env, connection, '/memory/recall', input, 2500);
+  const payload = await requestJson(env, connection, '/memory/recall', input, 2500, input.tenantId);
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 export async function writeRemoteMemory(env: Record<string, unknown>, connection: Connection, record: Record<string, unknown>) {
-  await requestJson(env, connection, '/memory/write', record, 2500);
+  await requestJson(env, connection, '/memory/write', record, 2500, typeof record.tenant_id === 'string' ? record.tenant_id : undefined);
 }
