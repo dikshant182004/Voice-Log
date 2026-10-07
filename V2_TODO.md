@@ -1,0 +1,185 @@
+# Voice-Log v2 — Production Agent Platform TODO
+
+Branch: `v2`
+Base: `main`
+Goal: evolve Voice-Log from a low-latency voice call logger into a configurable, multi-tenant voice-agent platform without compromising the real-time audio hot path.
+
+## 0. Engineering rules
+- [ ] Preserve WebRTC/Pipecat audio path as the latency-critical hot path.
+- [ ] No database/network/tool/MCP call may block audio processing.
+- [ ] Prefer streaming and parallel work wherever possible.
+- [ ] Keep agent runtime provider-agnostic behind explicit interfaces.
+- [ ] Use strict schemas and typed contracts at boundaries.
+- [ ] Pin/review current stable dependency versions before each dependency migration.
+- [ ] Add tests before/alongside behavior changes.
+- [ ] Keep every milestone independently buildable and committed.
+
+## 1. Baseline + dependency modernization
+- [ ] Capture current build/test baseline.
+- [ ] Audit root, Worker, and Python dependency versions against current official releases/docs.
+- [ ] Upgrade only compatible stable releases; avoid speculative major upgrades.
+- [ ] Refresh lockfiles where applicable.
+- [ ] Add dependency/version documentation and upgrade policy.
+- [ ] Add CI checks for typecheck, frontend build, Worker tests, Python tests, and eval gate.
+
+## 2. Agent Harness core
+- [ ] Introduce typed AgentDefinition schema.
+- [ ] Add AgentRuntime with lifecycle, streaming response, cancellation, and error contracts.
+- [ ] Separate agent identity, instructions, persona, model config, voice config, policies, tools, MCP, knowledge, and memory.
+- [ ] Add provider interfaces for LLM/STT/TTS.
+- [ ] Add deterministic config resolution/validation.
+- [ ] Add per-request runtime context: tenant, agent, user/session, request/call IDs.
+- [ ] Ensure runtime is stateless by default and safe for concurrent sessions.
+- [ ] Add unit tests for config merge, validation, cancellation, and failure behavior.
+
+## 3. Low-latency voice runtime
+- [ ] Preserve Pipecat streaming architecture.
+- [ ] Tune VAD/STT endpointing/turn-stop behavior from measured latency rather than guesses.
+- [ ] Stream LLM tokens directly into TTS where provider semantics permit.
+- [ ] Support barge-in/cancellation cleanly.
+- [ ] Avoid synchronous persistence/tool execution in the media path.
+- [ ] Add latency budgets and regression thresholds.
+- [ ] Track p50/p95/p99 for speech-end → STT → LLM TTFB → TTS TTFB → first audio.
+- [ ] Add provider timeout/fallback policy without adding avoidable latency.
+- [ ] Add load/concurrency smoke tests.
+
+## 4. Agent configuration + versioning
+- [ ] Persist agent definitions remotely.
+- [ ] Support draft/test/published versions.
+- [ ] Add immutable published agent versions.
+- [ ] Add environment-specific configuration.
+- [ ] Add configurable system prompt/persona/voice/model/tool policy.
+- [ ] Add agent cloning.
+- [ ] Add safe config rollout/rollback.
+
+## 5. Remote policy layer
+- [ ] Create policy schema.
+- [ ] Support brand voice, allowed topics, forbidden topics, escalation rules, response limits, data permissions, tool permissions, compliance rules.
+- [ ] Implement policy resolver with deterministic precedence.
+- [ ] Cache active policies per agent/version.
+- [ ] Never fetch remote policy synchronously for every audio turn when cached.
+- [ ] Add policy versioning and audit history.
+- [ ] Add policy compliance evals.
+
+## 6. Tools + MCP
+- [ ] Define typed Tool interface.
+- [ ] Add tool registry.
+- [ ] Add permission/capability checks before execution.
+- [ ] Add timeout, cancellation, retry, and result-size limits.
+- [ ] Add MCP client abstraction.
+- [ ] Support configurable MCP servers per agent/tenant.
+- [ ] Keep tool execution off the real-time audio critical path where possible.
+- [ ] Stream tool progress/status to the UI.
+- [ ] Add tool-call tracing.
+- [ ] Add tests for malicious/invalid tool inputs and permission failures.
+
+## 7. Memory
+- [ ] Separate session memory from long-term memory.
+- [ ] Define structured memory records with provenance and timestamps.
+- [ ] Add user/profile memory.
+- [ ] Add agent/company memory where appropriate.
+- [ ] Add memory retrieval policy and token budget.
+- [ ] Add write/update/delete semantics and conflict handling.
+- [ ] Cache hot session context.
+- [ ] Never inject untrusted memory as higher-priority instructions.
+- [ ] Add memory quality and leakage tests.
+
+## 8. Knowledge / RAG
+- [ ] Add knowledge-source abstraction.
+- [ ] Support documents/FAQs/web content ingestion.
+- [ ] Chunk, embed, index, and retrieve with metadata filters.
+- [ ] Prefer Postgres + pgvector initially unless measured scale requires another store.
+- [ ] Add tenant/agent isolation to every retrieval query.
+- [ ] Add citations/provenance to retrieved context.
+- [ ] Add retrieval latency telemetry.
+- [ ] Add groundedness evals.
+
+## 9. Multi-tenancy + auth
+- [ ] Add organizations/tenants.
+- [ ] Add users and memberships/roles.
+- [ ] Scope agents, policies, knowledge, memory, tools, calls, and usage by tenant.
+- [ ] Add authentication and authorization middleware.
+- [ ] Add API keys/service credentials for agent integrations.
+- [ ] Add rate limits and quotas.
+- [ ] Add tenant-safe data access tests.
+
+## 10. API + SDK
+- [ ] Version the public API.
+- [ ] Add agent CRUD/version endpoints.
+- [ ] Add text message endpoint.
+- [ ] Add voice/session endpoint.
+- [ ] Add streaming response transport.
+- [ ] Add tool/MCP configuration endpoints.
+- [ ] Add knowledge ingestion endpoints.
+- [ ] Add memory endpoints where appropriate.
+- [ ] Generate/maintain TypeScript contracts.
+- [ ] Add minimal JS/TS client SDK example.
+
+## 11. Agent Builder + Playground
+- [ ] Agent creation/editing UI.
+- [ ] Model + voice configuration.
+- [ ] Prompt/persona editor.
+- [ ] Policy editor.
+- [ ] Tool/MCP configuration.
+- [ ] Knowledge upload/management.
+- [ ] Memory controls.
+- [ ] Test/publish workflow.
+- [ ] Live voice playground.
+- [ ] Text playground.
+- [ ] Execution trace with latency, retrieval, memory, and tool events.
+
+## 12. Observability
+- [ ] Add correlation IDs across browser → bot → Worker → agent runtime → tools.
+- [ ] Add structured agent execution traces.
+- [ ] Record latency, token usage, tool calls, retrievals, errors, cancellations.
+- [ ] Add tenant/agent/version dimensions.
+- [ ] Add dashboards for latency, reliability, usage, and cost.
+- [ ] Add privacy-aware logging/redaction.
+
+## 13. Evaluation + safety
+- [ ] Extend existing eval harness for configurable agents.
+- [ ] Add task completion, relevance, groundedness, policy compliance, tool selection, memory correctness.
+- [ ] Add voice latency regression gates.
+- [ ] Add adversarial prompt/tool-input cases.
+- [ ] Add tenant isolation tests.
+- [ ] Add release gate for agent versions.
+
+## 14. Production deployment
+- [ ] Containerize Pipecat bot.
+- [ ] Add health/readiness endpoints.
+- [ ] Add horizontal scaling strategy.
+- [ ] Place bot/inference infrastructure geographically for latency.
+- [ ] Deploy frontend.
+- [ ] Deploy Worker/API.
+- [ ] Configure database/vector storage.
+- [ ] Add secrets management.
+- [ ] Add migrations and rollback strategy.
+- [ ] Add CI/CD for v2.
+
+## 15. Product polish
+- [ ] Landing page explaining platform value.
+- [ ] Demo agents: Marketing, Sales, Support.
+- [ ] Agent onboarding flow.
+- [ ] Usage/cost dashboard.
+- [ ] API documentation.
+- [ ] Architecture documentation.
+- [ ] Production troubleshooting guide.
+- [ ] Resume/project documentation with measured benchmarks.
+
+## Commit sequence
+1. chore(v2): establish baseline and dependency policy
+2. feat(agent): add configurable agent harness contracts/runtime
+3. feat(voice): connect harness to low-latency Pipecat runtime
+4. feat(config): add persisted agent configs and versioning
+5. feat(policy): add remote policy resolver
+6. feat(tools): add tool registry and execution contracts
+7. feat(mcp): add configurable MCP client layer
+8. feat(memory): add session and long-term memory
+9. feat(knowledge): add tenant-safe RAG
+10. feat(auth): add multi-tenant auth and isolation
+11. feat(api): add versioned agent platform API
+12. feat(ui): add agent builder and playground
+13. feat(observability): add traces, metrics, and cost telemetry
+14. feat(evals): add platform regression/safety gates
+15. feat(deploy): productionize bot/API/frontend
+16. docs(v2): finalize product, architecture, and resume documentation
