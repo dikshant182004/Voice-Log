@@ -17,6 +17,7 @@ export interface KnowledgeRetriever {
     agentId: string;
     query: string;
     limit: number;
+    sourceIds?: string[];
   }): Promise<KnowledgeDocument[]>;
 }
 
