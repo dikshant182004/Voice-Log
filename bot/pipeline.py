@@ -26,6 +26,7 @@ def create_pipeline(
     transcript_collector: TranscriptCollector,
     metrics_collector: MetricsCollector,
     transport: Any,
+    agent_definition: dict[str, Any] | None = None,
 ):
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.audio.vad.vad_analyzer import VADParams
@@ -55,7 +56,7 @@ def create_pipeline(
     )
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-    stt = DeepgramSTTService(
+    agent = agent_definition or {}\n    model_config = agent.get("model") or {}\n    voice_config = agent.get("voice") or {}\n    system_instruction = "\\n\\n".join(\n        part for part in (agent.get("persona", ""), agent.get("system_instructions", "")) if part\n    ) or VOICE_SYSTEM_PROMPT\n\n    stt = DeepgramSTTService(
         api_key=settings.deepgram_api_key,
         sample_rate=16000,
         encoding="linear16",
@@ -75,7 +76,7 @@ def create_pipeline(
         retry_timeout_secs=settings.llm_retry_timeout_seconds,
         retry_on_timeout=True,
         settings=GroqLLMService.Settings(
-            model=settings.llm_model,
+            model=str(model_config.get("model") or settings.llm_model),
             # Groq recommends a moderate temperature range for GPT-OSS. Keep
             # Keep reasoning low for interactive voice latency. Pipecat 1.12.0
             # passes Settings.extra directly to OpenAI AsyncCompletions.create(),
@@ -83,10 +84,10 @@ def create_pipeline(
             # it as an unexpected Python keyword argument before the request is
             # sent to Groq. GPT-OSS reasoning is therefore left at Groq default
             # response handling; Pipecat consumes the normal assistant content.
-            temperature=0.6,
-            max_completion_tokens=settings.llm_max_completion_tokens,
-            reasoning_effort=settings.llm_reasoning_effort,
-            system_instruction=VOICE_SYSTEM_PROMPT,
+            temperature=float(model_config.get("temperature", 0.6)),
+            max_completion_tokens=int(model_config.get("max_output_tokens") or settings.llm_max_completion_tokens),
+            reasoning_effort=str(model_config.get("reasoning_effort") or settings.llm_reasoning_effort),
+            system_instruction=system_instruction,
         ),
     )
 
