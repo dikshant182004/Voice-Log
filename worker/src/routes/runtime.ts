@@ -77,6 +77,7 @@ runtimeRouter.post('/respond', async (c) => {
         agentId: definition.id,
         query: body.message,
         limit: definition.knowledge.retrieval_limit,
+        sourceIds: definition.knowledge.source_ids,
       })
     : [];
 
