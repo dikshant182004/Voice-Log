@@ -91,7 +91,7 @@ runtimeRouter.post('/respond', async (c) => {
 
   const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
   const usage = result.usage || {};
-  await c.env.DB.prepare(
+  const persistRun = c.env.DB.prepare(
     'INSERT INTO agent_runs (id, tenant_id, agent_id, agent_version, user_id, session_id, channel, status, latency_ms, input_tokens, output_tokens, provider_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(
     crypto.randomUUID(),
@@ -108,6 +108,8 @@ runtimeRouter.post('/respond', async (c) => {
     result.provider_request_id || null,
     new Date().toISOString(),
   ).run();
+  const executionCtx = c.executionCtx as { waitUntil?: (promise: Promise<unknown>) => void };
+  executionCtx?.waitUntil?.(persistRun);
 
   if (definition.memory.enabled && definition.policies.allow_memory_write) {
     const sessionId = body.session_id || body.user_id;
