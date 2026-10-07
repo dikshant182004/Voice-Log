@@ -15,17 +15,17 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Keep every milestone independently buildable and committed.
 
 ## 1. Baseline + dependency modernization
-- [ ] Capture current build/test baseline.
-- [ ] Audit root, Worker, and Python dependency versions against current official releases/docs.
+- [x] Capture current build/test baseline.
+- [x] Audit root, Worker, and Python dependency versions against current official releases/docs.
 - [ ] Upgrade only compatible stable releases; avoid speculative major upgrades.
 - [ ] Refresh lockfiles where applicable.
 - [ ] Add dependency/version documentation and upgrade policy.
 - [ ] Add CI checks for typecheck, frontend build, Worker tests, Python tests, and eval gate.
 
 ## 2. Agent Harness core
-- [ ] Introduce typed AgentDefinition schema.
-- [ ] Add AgentRuntime with lifecycle, streaming response, cancellation, and error contracts.
-- [ ] Separate agent identity, instructions, persona, model config, voice config, policies, tools, MCP, knowledge, and memory.
+- [x] Introduce typed AgentDefinition schema.
+- [x] Add AgentRuntime with lifecycle, streaming response, cancellation, and error contracts.
+- [x] Separate agent identity, instructions, persona, model config, voice config, policies, tools, MCP, knowledge, and memory.
 - [ ] Add provider interfaces for LLM/STT/TTS.
 - [ ] Add deterministic config resolution/validation.
 - [ ] Add per-request runtime context: tenant, agent, user/session, request/call IDs.
@@ -44,8 +44,8 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add load/concurrency smoke tests.
 
 ## 4. Agent configuration + versioning
-- [ ] Persist agent definitions remotely.
-- [ ] Support draft/test/published versions.
+- [x] Persist agent definitions remotely.
+- [x] Support draft/test/published versions.
 - [ ] Add immutable published agent versions.
 - [ ] Add environment-specific configuration.
 - [ ] Add configurable system prompt/persona/voice/model/tool policy.
@@ -53,7 +53,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add safe config rollout/rollback.
 
 ## 5. Remote policy layer
-- [ ] Create policy schema.
+- [x] Create policy schema.
 - [ ] Support brand voice, allowed topics, forbidden topics, escalation rules, response limits, data permissions, tool permissions, compliance rules.
 - [ ] Implement policy resolver with deterministic precedence.
 - [ ] Cache active policies per agent/version.
@@ -62,11 +62,11 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add policy compliance evals.
 
 ## 6. Tools + MCP
-- [ ] Define typed Tool interface.
-- [ ] Add tool registry.
+- [x] Define typed Tool interface.
+- [x] Add tool registry.
 - [ ] Add permission/capability checks before execution.
 - [ ] Add timeout, cancellation, retry, and result-size limits.
-- [ ] Add MCP client abstraction.
+- [x] Add MCP client abstraction.
 - [ ] Support configurable MCP servers per agent/tenant.
 - [ ] Keep tool execution off the real-time audio critical path where possible.
 - [ ] Stream tool progress/status to the UI.
@@ -74,7 +74,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add tests for malicious/invalid tool inputs and permission failures.
 
 ## 7. Memory
-- [ ] Separate session memory from long-term memory.
+- [x] Separate session memory from long-term memory.
 - [ ] Define structured memory records with provenance and timestamps.
 - [ ] Add user/profile memory.
 - [ ] Add agent/company memory where appropriate.
@@ -85,7 +85,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add memory quality and leakage tests.
 
 ## 8. Knowledge / RAG
-- [ ] Add knowledge-source abstraction.
+- [x] Add knowledge-source abstraction.
 - [ ] Support documents/FAQs/web content ingestion.
 - [ ] Chunk, embed, index, and retrieve with metadata filters.
 - [ ] Prefer Postgres + pgvector initially unless measured scale requires another store.
@@ -116,7 +116,7 @@ Goal: evolve Voice-Log from a low-latency voice call logger into a configurable,
 - [ ] Add minimal JS/TS client SDK example.
 
 ## 11. Agent Builder + Playground
-- [ ] Agent creation/editing UI.
+- [x] Agent creation/editing UI.
 - [ ] Model + voice configuration.
 - [ ] Prompt/persona editor.
 - [ ] Policy editor.
