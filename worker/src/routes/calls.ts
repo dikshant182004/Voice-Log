@@ -105,7 +105,7 @@ callsRouter.post('/', requireIngestAuth, requireTenantHeader(), async (c) => {
     const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), payload.agent_id, payload.agent_version, false);
     if (!agent || !agent.definition.observability.enabled || !agent.definition.observability.connection_id || agent.definition.observability.mode === 'd1' || !agent.definition.observability.events.includes('call_ended')) return;
     const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), agent.definition.observability.connection_id);
-    if (!connection) return;
+    if (!connection || connection.type !== 'webhook') return;
     const source: Record<string, unknown> = {
       call_id: payload.call_id,
       tenant_id: payload.tenant_id,
