@@ -62,7 +62,7 @@ WebRTC / STT / LLM / TTS
 
 ## Storage and customer-owned data
 
-D1 is the default control-plane store, not a requirement for customer data. Tenants can register named connections and reference them from an agent definition through `connection_id` values. Secrets are never embedded in agent JSON; the connection stores only a secret reference, resolved from operator-managed Worker secrets (with an external secret manager as the production extension point).
+D1 is the default control-plane store, not a requirement for customer data. Tenants can register named connections and reference them from an agent definition through `connection_id` values. Secrets are never embedded in agent JSON; the connection stores only a secret reference. Customer connection secrets are tenant-scoped at the Worker binding layer: for tenant `acme` and secret ref `POLICY_API`, the binding is `CONNECTION_SECRET_acme_POLICY_API`. MCP credentials follow `MCP_AUTH_acme_<auth_ref>`. This prevents one tenant from selecting another tenant's secret name. Cloudflare recommends Worker Secrets/Secrets Store for sensitive values.
 
 The current adapters include:
 
