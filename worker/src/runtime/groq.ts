@@ -25,7 +25,7 @@ export async function generateGroqResponse(
   input: RuntimeInput,
   mcpAuthorizations: Record<string, string> = {},
 ): Promise<{ text: string; usage?: any; provider_request_id?: string }> {
-  const tools = agent.mcp_servers
+  const tools = agent.policies.allow_external_tools ? agent.mcp_servers
     .filter((server) => server.enabled)
     .map((server) => ({
       type: 'mcp',
