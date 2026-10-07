@@ -4,6 +4,12 @@ import {
   CallStatsResponse,
 } from '../types';
 
+export interface AgentDefinition {
+  id: string; version: number; name: string; description: string; system_instructions: string; persona: string;
+  model: { provider: string; model: string; temperature: number; max_output_tokens: number; reasoning_effort: string };
+  voice: { provider: string; voice_id: string; sample_rate: number; language: string } | null;
+}
+
 export class ConfigurationError extends Error {
   constructor(message: string) {
     super(message);
@@ -103,6 +109,22 @@ export const apiClient = {
 
   getBaseUrlSafe(): string {
     return getBaseUrl();
+  },
+
+  async createAgent(definition: AgentDefinition, tenantId: string, token: string): Promise<any> {
+    return requestJson('/agents', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'X-Tenant-ID': tenantId, 'Content-Type': 'application/json' },
+      body: JSON.stringify(definition),
+    });
+  },
+
+  async getAgent(id: string, tenantId: string, token: string, version?: number): Promise<any> {
+    const suffix = version ? '?version=' + encodeURIComponent(String(version)) : '';
+    return requestJson('/agents/' + encodeURIComponent(id) + suffix, {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + token, 'X-Tenant-ID': tenantId },
+    });
   },
 
   async listCalls(limit = 20, cursor?: string | null, signal?: AbortSignal): Promise<CallsListResponse> {
