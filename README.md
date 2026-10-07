@@ -1,3 +1,63 @@
+# Voice-Log v2 — Multi-Tenant Voice Agent Platform
+
+> v2 extends the original Pipecat/WebRTC call logger into a configurable agent harness for voice and text agents.
+
+## v2 capabilities
+
+- Versioned draft/published agent definitions.
+- Tenant-scoped API keys and telemetry isolation.
+- Remote policies, structured memory, knowledge retrieval, tools and MCP configuration.
+- Authenticated agent runtime using Groq's OpenAI-compatible Responses API.
+- Configurable remote MCP tools through the agent definition.
+- Agent Builder and Playground UI.
+- Low-latency Pipecat voice runtime with call-level agent selection.
+- Cursor-paginated calls, latency analytics and post-call evaluation.
+- CI gates for frontend, Worker, Python bot and eval regressions.
+
+## v2 API
+
+New API routes are available under /v1. Legacy routes remain for compatibility.
+
+| Route | Purpose |
+|---|---|
+| POST /v1/agents | Create agent version |
+| GET /v1/agents/:id | Read agent configuration |
+| POST /v1/agents/:id/versions/:version/publish | Publish version |
+| POST /v1/runtime/respond | Execute text agent turn |
+| POST /v1/policies | Create policy |
+| GET/POST /v1/memory | Recall/write memory |
+| POST /v1/knowledge/sources | Create knowledge source |
+| POST /v1/knowledge/documents | Ingest document |
+| GET /v1/knowledge/search | Retrieve knowledge |
+| POST /v1/tools | Register tool |
+| POST /v1/mcp | Register MCP server |
+| POST /v1/api-keys | Issue tenant API key |
+| DELETE /v1/api-keys/:id | Revoke API key |
+| POST /v1/calls | Ingest voice call |
+| GET /v1/calls | List tenant calls |
+| GET /v1/stats | Tenant analytics |
+
+## v2 security model
+
+- Production tenant API keys are stored as SHA-256 hashes.
+- API-key authentication derives tenant identity from the key; callers cannot impersonate another tenant by changing a header.
+- Internal bot/admin requests can use the server-only INGEST_TOKEN plus X-Tenant-ID.
+- Published agent versions are immutable.
+- Memory and retrieved knowledge are treated as untrusted context.
+- MCP servers and tools are explicit capabilities configured per agent.
+- Do not expose tenant API keys in a public browser bundle; protect the production dashboard with your IdP/Cloudflare Access.
+
+## v2 database migrations
+
+0003_agents.sql, 0004_platform_primitives.sql, 0005_call_tenancy.sql and 0006_api_keys.sql add the agent platform, isolation and credential layers. Apply them with Wrangler D1 migrations rather than manually editing the database.
+
+## v2 runtime design
+
+The WebRTC/Pipecat audio path remains latency-critical and does not wait on D1, analytics or per-turn Worker writes. Agent configuration is resolved at session setup and cached in the bot. The text runtime composes system instructions, persona, policy rules, memory and knowledge before inference; configured MCP servers are passed to the Groq Responses API.
+
+See docs/V2_ARCHITECTURE.md and V2_TODO.md for the engineering contract and milestone history.
+
+---
 # Mini Call Log Service (Vaami.ai Take-Home)
 
 A low-latency voice AI call logging and analytics platform. Users initiate real-time conversational voice calls from the browser via WebRTC, and completed sessions are ingested, analyzed, and stored in **Cloudflare D1** alongside turn-by-turn transcripts and latency metrics.
