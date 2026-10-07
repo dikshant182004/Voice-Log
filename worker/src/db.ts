@@ -85,7 +85,7 @@ export const callRepo: CallRepository = {
             id, tenant_id, agent_id, agent_version, user_id, started_at, ended_at, duration_ms, status, end_reason,
             config_json, turn_count, interruption_count, p50_v2v_ms, p95_v2v_ms,
             usage_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO NOTHING`
         )
         .bind(
