@@ -54,7 +54,6 @@ export async function generateGroqResponse(
       reasoning: agent.model.reasoning_effort === 'none' ? undefined : { effort: agent.model.reasoning_effort },
       tools: tools.length ? tools : undefined,
       tool_choice: tools.length ? 'auto' : undefined,
-      store: false,
     }),
   });
 
