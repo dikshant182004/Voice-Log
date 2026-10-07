@@ -1,8 +1,8 @@
 # Pipecat Voice Bot Core Production Dependencies (Pinned per Dependency Policy)
 pipecat-ai[webrtc,runner,silero,deepgram,groq,cartesia]==1.12.0
-fastapi>=0.115.6,<1
-uvicorn>=0.34.0,<1
+fastapi==0.142.2
+uvicorn==0.53.0
 httpx>=0.28.1,<1
-pydantic>=2.10.6,<3
-pydantic-settings>=2.7.1,<3
+pydantic==2.13.5
+pydantic-settings==2.15.0
 openai<3
