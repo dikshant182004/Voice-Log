@@ -71,3 +71,4 @@ export async function writeRemoteEvent(
 ): Promise<void> {
   await requestJson(env, connection, '/events', event, 2500);
 }
+\nexport async function recallRemoteMemory(env: Record<string, unknown>, connection: Connection, input: { tenantId: string; agentId: string; userId?: string; limit: number }) {\n  const payload = await requestJson(env, connection, '/memory/recall', input, 2500);\n  return Array.isArray(payload?.items) ? payload.items : [];\n}\n\nexport async function writeRemoteMemory(env: Record<string, unknown>, connection: Connection, record: Record<string, unknown>) {\n  await requestJson(env, connection, '/memory/write', record, 2500);\n}\n
