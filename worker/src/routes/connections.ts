@@ -114,7 +114,7 @@ connectionsRouter.post('/:id/test', async (c) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const secret = row.secret_ref ? (c.env as any)['CONNECTION_SECRET_' + row.secret_ref] : undefined;
+    const secret = row.secret_ref ? (c.env as any)['CONNECTION_SECRET_' + c.get('tenantId') + '_' + row.secret_ref] : undefined;
     const headers: Record<string, string> = {};
     if (secret) headers.authorization = 'Bearer ' + secret;
     const response = await fetch(base + '/health', { headers, signal: controller.signal });
