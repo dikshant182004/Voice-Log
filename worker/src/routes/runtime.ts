@@ -120,7 +120,7 @@ runtimeRouter.post('/respond', async (c) => {
   executionCtx?.waitUntil?.(persistRun);
 
   const persistExternalRun = async () => {
-    if (!definition.observability.enabled || !definition.observability.connection_id || definition.observability.mode === 'd1') return;
+    if (!definition.observability.enabled || !definition.observability.connection_id || definition.observability.mode === 'd1' || !definition.observability.events.includes('agent_run')) return;
     const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), definition.observability.connection_id);
     if (!connection) return;
     const event = {
