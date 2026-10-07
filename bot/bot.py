@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from bot.config import settings
+from bot.agent_client import AgentConfigClient
 from bot.observers.metrics import MetricsCollector
 from bot.observers.transcript import TranscriptCollector
 from bot.pipeline import create_pipeline
@@ -60,13 +61,15 @@ logger = logging.getLogger("bot.server")
 
 http_client: Optional[httpx.AsyncClient] = None
 reporter: Optional[CallReporter] = None
+agent_client: Optional[AgentConfigClient] = None
 webrtc_handler = SmallWebRTCRequestHandler()
 
 
 class CallSession:
-    def __init__(self, call_id: str, reporter_instance: CallReporter):
+    def __init__(self, call_id: str, reporter_instance: CallReporter, agent_definition: Optional[dict[str, Any]] = None):
         self.call_id = call_id
         self.reporter = reporter_instance
+        self.agent_definition = agent_definition
         self.started_at_dt = datetime.datetime.now(datetime.timezone.utc)
         self.started_at = self.started_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         self.ended_at: Optional[str] = None
@@ -138,7 +141,9 @@ class CallSession:
                 "stt": f"deepgram:{settings.stt_model}",
                 "llm": f"groq:{settings.llm_model}",
                 "tts": f"{settings.tts_provider}:{settings.tts_model}",
-                "persona": "default",
+                "persona": str((self.agent_definition or {}).get("persona") or "default"),
+                "agent_id": (self.agent_definition or {}).get("id"),
+                "agent_version": (self.agent_definition or {}).get("version"),
             },
             "transcript": self.transcript.get_turns(),
             "metrics": self.metrics.get_metrics(),
@@ -180,7 +185,7 @@ async def measure_provider_rtt(client: httpx.AsyncClient) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, reporter
+    global http_client, reporter, agent_client
 
     settings.validate_keys()
 
@@ -190,6 +195,7 @@ async def lifespan(app: FastAPI):
         ingest_token=settings.ingest_token,
         client=http_client,
     )
+    agent_client = AgentConfigClient(http_client)
 
     await measure_provider_rtt(http_client)
     flushed = await reporter.flush_spool()
@@ -280,6 +286,7 @@ async def _run_session(
             session.transcript,
             session.metrics,
             transport,
+            session.agent_definition,
         )
         session.runner = WorkerRunner(
             handle_sigint=False,
@@ -339,8 +346,20 @@ async def handle_webrtc_offer(payload: dict):
     if call_id in active_sessions:
         raise HTTPException(status_code=409, detail="Call ID is already active")
 
+    agent_definition = None
+    request_data = request.request_data if isinstance(request.request_data, dict) else {}
+    requested_agent = str(request_data.get("agent_id") or settings.default_agent_id or "").strip()
+    tenant_id = str(request_data.get("tenant_id") or settings.default_tenant_id or "").strip()
+    requested_version = request_data.get("agent_version")
+    if requested_agent and tenant_id and agent_client is not None:
+        try:
+            version = int(requested_version) if requested_version is not None else None
+            agent_definition = await agent_client.get(requested_agent, tenant_id, version)
+        except (TypeError, ValueError):
+            agent_definition = None
+
     current_call_id.set(call_id)
-    session = CallSession(call_id, reporter)
+    session = CallSession(call_id, reporter, agent_definition)
     active_sessions[call_id] = session
     session.start_timer()
 
