@@ -9,6 +9,7 @@ import { knowledgeRouter } from './routes/knowledge';
 import { toolsRouter } from './routes/tools';
 import { mcpRouter } from './routes/mcp';
 import { runtimeRouter } from './routes/runtime';
+import { voiceRouter } from './routes/voice';
 import { corsMiddleware } from './middleware/cors';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { errorHandler, notFoundHandler } from './middleware/errors';
@@ -39,6 +40,7 @@ app.route('/knowledge', knowledgeRouter);
 app.route('/tools', toolsRouter);
 app.route('/mcp', mcpRouter);
 app.route('/runtime', runtimeRouter);
+app.route('/voice', voiceRouter);
 
 // Versioned public API. Legacy routes remain mounted for existing clients.
 app.route('/v1/calls', callsRouter);
@@ -51,6 +53,7 @@ app.route('/v1/knowledge', knowledgeRouter);
 app.route('/v1/tools', toolsRouter);
 app.route('/v1/mcp', mcpRouter);
 app.route('/v1/runtime', runtimeRouter);
+app.route('/v1/voice', voiceRouter);
 
 // Global Error and Not Found Handlers
 app.onError(errorHandler);
