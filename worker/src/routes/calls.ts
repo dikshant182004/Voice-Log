@@ -24,7 +24,7 @@ const MAX_BODY_BYTES = 512 * 1024; // 512 KB
  * Authenticated via Bearer <INGEST_TOKEN>.
  * Atomic & Idempotent: safe to retry if network dropped.
  */
-callsRouter.post('/', requireIngestAuth, async (c) => {
+callsRouter.post('/', requireIngestAuth, requireTenantHeader(), async (c) => {
   const requestId = c.get('requestId');
 
   // Enforce body size limit
@@ -74,6 +74,9 @@ callsRouter.post('/', requireIngestAuth, async (c) => {
   }
 
   const payload = parsed.data;
+  if (payload.tenant_id !== c.get('tenantId')) {
+    return c.json({ error: { code: 'TENANT_MISMATCH', message: 'Payload tenant does not match authenticated tenant', request_id: requestId } }, 403);
+  }
   c.set('callId', payload.call_id);
 
   logEvent('info', requestId, 'call.received', 'Received call payload for ingestion', {
