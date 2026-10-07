@@ -1,0 +1,110 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import { agentRepo } from '../agents/repository';
+import { loadPolicies } from '../policy/repository';
+import { resolvePolicyInstructions } from '../policy/types';
+import { D1MemoryStore } from '../memory/d1';
+import { buildMemoryContext } from '../memory/types';
+import { D1KnowledgeRetriever } from '../knowledge/d1';
+import { buildKnowledgeContext } from '../knowledge/types';
+import { generateGroqResponse } from '../runtime/groq';
+import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
+
+interface Env {
+  DB: import('../db').D1Database;
+  INGEST_TOKEN?: string;
+  GROQ_API_KEY?: string;
+}
+
+const RequestSchema = z.object({
+  agent_id: z.string().min(1),
+  agent_version: z.number().int().positive().optional(),
+  user_id: z.string().min(1).max(256).optional(),
+  session_id: z.string().min(1).max(256).optional(),
+  message: z.string().min(1).max(20000),
+  history: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().max(20000),
+  })).max(24).default([]),
+});
+
+export const runtimeRouter = new Hono<{ Bindings: Env; Variables: { requestId: string; tenantId: string } }>();
+runtimeRouter.use('*', requireIngestAuth);
+runtimeRouter.use('*', requireTenantHeader());
+
+runtimeRouter.post('/respond', async (c) => {
+  const parsed = RequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid runtime request', request_id: c.get('requestId'), details: parsed.error.issues } }, 400);
+  }
+
+  if (!c.env.GROQ_API_KEY) {
+    return c.json({ error: { code: 'RUNTIME_MISCONFIGURED', message: 'GROQ_API_KEY is not configured', request_id: c.get('requestId') } }, 500);
+  }
+
+  const body = parsed.data;
+  const stored = await agentRepo.get(c.env.DB, c.get('tenantId'), body.agent_id, body.agent_version, true);
+  if (!stored) {
+    return c.json({ error: { code: 'AGENT_NOT_FOUND', message: 'Published agent version not found', request_id: c.get('requestId') } }, 404);
+  }
+
+  const definition = stored.definition;
+  if (definition.model.provider !== 'groq') {
+    return c.json({ error: { code: 'PROVIDER_UNSUPPORTED', message: 'The Worker runtime currently supports provider=groq; voice adapters remain provider-neutral', request_id: c.get('requestId') } }, 422);
+  }
+
+  const policies = await loadPolicies(c.env.DB, c.get('tenantId'), definition.policies.policy_ids);
+  const memoryStore = new D1MemoryStore(c.env.DB);
+  const memories = definition.memory.enabled
+    ? await memoryStore.recall({
+        tenantId: c.get('tenantId'),
+        agentId: definition.id,
+        userId: body.user_id,
+        limit: definition.memory.long_term_retrieval_limit,
+      })
+    : [];
+  const knowledge = definition.knowledge.enabled
+    ? await new D1KnowledgeRetriever(c.env.DB).search({
+        tenantId: c.get('tenantId'),
+        agentId: definition.id,
+        query: body.message,
+        limit: definition.knowledge.retrieval_limit,
+      })
+    : [];
+
+  const result = await generateGroqResponse(c.env.GROQ_API_KEY, definition, {
+    message: body.message,
+    history: body.history,
+    memories: buildMemoryContext(memories),
+    knowledge: buildKnowledgeContext(knowledge),
+    policyInstructions: resolvePolicyInstructions(policies),
+  });
+
+  if (definition.memory.enabled && definition.policies.allow_memory_write) {
+    const sessionId = body.session_id || body.user_id;
+    if (sessionId) {
+      const base = {
+        tenant_id: c.get('tenantId'),
+        agent_id: definition.id,
+        user_id: body.user_id,
+        session_id: sessionId,
+        kind: 'session' as const,
+        importance: 0.2,
+        metadata: {},
+      };
+      await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'User: ' + body.message });
+      if (result.text) {
+        await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'Assistant: ' + result.text });
+      }
+    }
+  }
+
+  return c.json({
+    request_id: c.get('requestId'),
+    agent: { id: definition.id, version: definition.version },
+    response: result.text,
+    usage: result.usage || null,
+    provider_request_id: result.provider_request_id || null,
+    retrieval: { memories: memories.length, knowledge: knowledge.length, policies: policies.length },
+  });
+});
