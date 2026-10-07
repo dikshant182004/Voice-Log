@@ -5,10 +5,11 @@ import { CallDetailPage } from './pages/CallDetailPage';
 import { StatsPage } from './pages/StatsPage';
 import { LiveCallView } from './pages/LiveCallView';
 import { DevConsolePage } from './pages/DevConsolePage';
+import { AgentBuilderPage } from './pages/AgentBuilderPage';
 import { CallDetailResponse } from './types';
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs'>('calls');
+  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs' | 'agents'>('calls');
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
 
   const handleSelectCall = (callId: string) => {
