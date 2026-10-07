@@ -7,10 +7,11 @@ import { LiveCallView } from './pages/LiveCallView';
 import { DevConsolePage } from './pages/DevConsolePage';
 import { AgentBuilderPage } from './pages/AgentBuilderPage';
 import { AgentPlaygroundPage } from './pages/AgentPlaygroundPage';
+import { ConnectionsPage } from './pages/ConnectionsPage';
 import { CallDetailResponse } from './types';
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground'>('calls');
+  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground' | 'connections' | 'connections'>('calls');
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
 
   const handleSelectCall = (callId: string) => {
@@ -59,6 +60,8 @@ export function App() {
           <AgentBuilderPage />
         ) : currentTab === 'playground' ? (
           <AgentPlaygroundPage />
+        ) : currentTab === 'connections' ? (
+          <ConnectionsPage />
         ) : (
           <DevConsolePage />
         )}
