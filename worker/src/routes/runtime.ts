@@ -111,24 +111,25 @@ runtimeRouter.post('/respond', async (c) => {
   const executionCtx = c.executionCtx as { waitUntil?: (promise: Promise<unknown>) => void };
   executionCtx?.waitUntil?.(persistRun);
 
-  if (definition.memory.enabled && definition.policies.allow_memory_write) {
+  const persistMemory = async () => {
+    if (!definition.memory.enabled || !definition.policies.allow_memory_write) return;
     const sessionId = body.session_id || body.user_id;
-    if (sessionId) {
-      const base = {
-        tenant_id: c.get('tenantId'),
-        agent_id: definition.id,
-        user_id: body.user_id,
-        session_id: sessionId,
-        kind: 'session' as const,
-        importance: 0.2,
-        metadata: {},
-      };
-      await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'User: ' + body.message });
-      if (result.text) {
-        await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'Assistant: ' + result.text });
-      }
+    if (!sessionId) return;
+    const base = {
+      tenant_id: c.get('tenantId'),
+      agent_id: definition.id,
+      user_id: body.user_id,
+      session_id: sessionId,
+      kind: 'session' as const,
+      importance: 0.2,
+      metadata: {},
+    };
+    await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'User: ' + body.message });
+    if (result.text) {
+      await memoryStore.write({ id: crypto.randomUUID(), ...base, content: 'Assistant: ' + result.text });
     }
-  }
+  };
+  executionCtx?.waitUntil?.(persistMemory());
 
   return c.json({
     request_id: c.get('requestId'),
