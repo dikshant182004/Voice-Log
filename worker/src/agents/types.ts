@@ -42,6 +42,15 @@ export const AgentMemoryConfigSchema = z.object({
   long_term_retrieval_limit: z.number().int().nonnegative().max(20).default(5),
 });
 
+export const AgentObservabilityConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  connection_id: z.string().min(1).optional(),
+  mode: z.enum(['d1', 'external', 'both']).default('d1'),
+  events: z.array(z.enum(['call_started', 'call_ended', 'turn', 'tool', 'error', 'agent_run'])).default(['call_started', 'call_ended', 'error']),
+  fields: z.array(z.string().min(1).max(80)).default(['call_id', 'agent_id', 'agent_version', 'duration_ms', 'status', 'latency_ms', 'usage']),
+  retention_days: z.number().int().positive().max(3650).optional(),
+});
+
 export const AgentKnowledgeConfigSchema = z.object({
   enabled: z.boolean().default(false),
   source_ids: z.array(z.string().min(1)).default([]),
@@ -70,6 +79,7 @@ export const AgentDefinitionSchema = z.object({
   mcp_servers: z.array(AgentMcpServerSchema).default([]),
   memory: AgentMemoryConfigSchema.default({}),
   knowledge: AgentKnowledgeConfigSchema.default({}),
+  observability: AgentObservabilityConfigSchema.default({}),
   data: z.object({
     policy_connection_id: z.string().min(1).optional(),
     knowledge_connection_id: z.string().min(1).optional(),
