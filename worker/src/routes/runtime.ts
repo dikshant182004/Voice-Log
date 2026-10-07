@@ -9,6 +9,7 @@ import { D1KnowledgeRetriever } from '../knowledge/d1';
 import { buildKnowledgeContext } from '../knowledge/types';
 import { generateGroqResponse } from '../runtime/groq';
 import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
+import { resolvePolicyProvider, resolveMemoryProvider, resolveKnowledgeProvider } from '../providers/resolve';
 
 interface Env {
   DB: import('../db').D1Database;
@@ -54,7 +55,7 @@ runtimeRouter.post('/respond', async (c) => {
     return c.json({ error: { code: 'PROVIDER_UNSUPPORTED', message: 'The Worker runtime currently supports provider=groq; voice adapters remain provider-neutral', request_id: c.get('requestId') } }, 422);
   }
 
-  const policies = await loadPolicies(c.env.DB, c.get('tenantId'), definition.policies.policy_ids);
+  const policies = await resolvePolicyProvider(c.env.DB, c.env as unknown as Record<string, unknown>, c.get('tenantId'), definition);
   const effectiveDefinition = {
     ...definition,
     model: {
@@ -62,7 +63,7 @@ runtimeRouter.post('/respond', async (c) => {
       max_output_tokens: Math.min(definition.model.max_output_tokens, definition.policies.max_response_tokens),
     },
   };
-  const memoryStore = new D1MemoryStore(c.env.DB);
+  const memoryStore = await resolveMemoryProvider(c.env.DB, c.env as unknown as Record<string, unknown>, c.get('tenantId'), definition);
   const memories = definition.memory.enabled
     ? await memoryStore.recall({
         tenantId: c.get('tenantId'),
