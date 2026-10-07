@@ -6,6 +6,9 @@ import { logEvent } from '../lib/logger';
 import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
 import { PostCallPayloadSchema } from '../schemas';
 import { runPostCallJudge } from '../evals/postCallJudge';
+import { agentRepo } from '../agents/repository';
+import { connectionRepo } from '../connections/types';
+import { writeRemoteEvent } from '../providers/remote';
 
 export interface WorkerEnv {
   DB: D1Database;
@@ -96,6 +99,46 @@ callsRouter.post('/', requireIngestAuth, requireTenantHeader(), async (c) => {
   }
 
   logEvent('info', requestId, 'call.persisted', 'Successfully persisted call record and metrics to D1', { callId });
+
+  const externalLog = async () => {
+    if (!payload.agent_id) return;
+    const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), payload.agent_id, payload.agent_version, false);
+    if (!agent || !agent.definition.observability.enabled || !agent.definition.observability.connection_id || agent.definition.observability.mode === 'd1') return;
+    const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), agent.definition.observability.connection_id);
+    if (!connection) return;
+    const source: Record<string, unknown> = {
+      call_id: payload.call_id,
+      tenant_id: payload.tenant_id,
+      agent_id: payload.agent_id,
+      agent_version: payload.agent_version,
+      user_id: payload.user_id,
+      started_at: payload.started_at,
+      ended_at: payload.ended_at,
+      duration_ms: payload.duration_ms,
+      status: payload.status,
+      end_reason: payload.end_reason,
+      transcript: payload.transcript,
+      metrics: payload.metrics,
+      config: payload.config,
+      usage: payload.usage,
+    };
+    const fields = Object.fromEntries(
+      agent.definition.observability.fields
+        .map((field) => [field, source[field]])
+        .filter(([, value]) => value !== undefined)
+    );
+    await writeRemoteEvent(c.env as unknown as Record<string, unknown>, connection, {
+      event: 'call_ended',
+      created_at: new Date().toISOString(),
+      fields,
+    });
+  };
+  try {
+    const executionCtx = c.executionCtx as { waitUntil?: (promise: Promise<any>) => void } | undefined;
+    executionCtx?.waitUntil?.(externalLog());
+  } catch {
+    // External logging is best-effort and never blocks call ingestion.
+  }
 
   // Advanced Feature 2: Trigger post-call judge asynchronously without delaying response
   try {
