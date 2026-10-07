@@ -4,7 +4,7 @@ import { D1MemoryStore } from '../memory/d1';
 import type { MemoryStore } from '../memory/types';
 import { D1KnowledgeRetriever } from '../knowledge/d1';
 import type { KnowledgeRetriever } from '../knowledge/types';
-import { fetchRemotePolicies, searchRemoteKnowledge } from './remote';
+import { fetchRemotePolicies, searchRemoteKnowledge, recallRemoteMemory, writeRemoteMemory } from './remote';
 import { loadPolicies } from '../policy/repository';
 import type { PolicyDefinition } from '../policy/types';
 
@@ -33,7 +33,16 @@ export async function resolveMemoryProvider(
 ): Promise<MemoryStore> {
   const ref = definition.data?.memory_connection_id;
   if (!ref) return new D1MemoryStore(db);
-  throw new Error('Custom memory connections currently require a compatible adapter; connection=' + ref);
+  const connection = await connectionRepo.get(db, tenantId, ref);
+  if (!connection) throw new Error('Memory connection not found: ' + ref);
+  return {
+    async recall(input) {
+      return recallRemoteMemory(env, connection, input);
+    },
+    async write(record) {
+      return writeRemoteMemory(env, connection, record);
+    },
+  };
 }
 
 export async function resolveKnowledgeProvider(
