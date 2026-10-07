@@ -43,13 +43,14 @@ agentsRouter.post('/', async (c) => {
 
 agentsRouter.get('/:id', async (c) => {
   const versionParam = c.req.query('version');
+  const publishedOnly = c.req.query('published') === 'true';
   const version = versionParam === undefined ? undefined : Number(versionParam);
 
   if (versionParam !== undefined && (!Number.isInteger(version) || version < 1)) {
     return c.json({ error: { code: 'INVALID_VERSION', message: 'version must be a positive integer', request_id: c.get('requestId') } }, 400);
   }
 
-  const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), c.req.param('id'), version);
+  const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), c.req.param('id'), version, publishedOnly);
   if (!agent) return c.json({ error: { code: 'AGENT_NOT_FOUND', message: 'Agent not found', request_id: c.get('requestId') } }, 404);
   return c.json(agent);
 });
