@@ -3,7 +3,7 @@ import { D1Database } from '../db';
 import { callRepo } from '../db';
 import { isValidUuid } from '../lib/ids';
 import { logEvent } from '../lib/logger';
-import { requireIngestAuth } from '../middleware/auth';
+import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
 import { PostCallPayloadSchema } from '../schemas';
 import { runPostCallJudge } from '../evals/postCallJudge';
 
@@ -15,7 +15,7 @@ export interface WorkerEnv {
   ALLOW_DEV_ORIGINS?: string;
 }
 
-export const callsRouter = new Hono<{ Bindings: WorkerEnv; Variables: { requestId: string; callId?: string } }>();
+export const callsRouter = new Hono<{ Bindings: WorkerEnv; Variables: { requestId: string; callId?: string; tenantId: string } }>();
 
 const MAX_BODY_BYTES = 512 * 1024; // 512 KB
 
@@ -115,21 +115,21 @@ callsRouter.post('/', requireIngestAuth, async (c) => {
  * GET /calls - List calls with cursor-based pagination.
  * Excludes full transcripts for efficiency.
  */
-callsRouter.get('/', async (c) => {
+callsRouter.get('/', requireIngestAuth, requireTenantHeader(), async (c) => {
   const limitParam = c.req.query('limit');
   const cursorParam = c.req.query('cursor');
 
   const limit = limitParam ? parseInt(limitParam, 10) : 20;
   const safeLimit = isNaN(limit) ? 20 : limit;
 
-  const result = await callRepo.listCalls(c.env.DB, safeLimit, cursorParam);
+  const result = await callRepo.listCalls(c.env.DB, c.get('tenantId'), safeLimit, cursorParam);
   return c.json(result);
 });
 
 /**
  * GET /calls/:id - Get detailed call record including transcript, metrics, and evals.
  */
-callsRouter.get('/:id', async (c) => {
+callsRouter.get('/:id', requireIngestAuth, requireTenantHeader(), async (c) => {
   const requestId = c.get('requestId');
   const id = c.req.param('id');
 
@@ -146,7 +146,7 @@ callsRouter.get('/:id', async (c) => {
     );
   }
 
-  const detail = await callRepo.getCallById(c.env.DB, id);
+  const detail = await callRepo.getCallById(c.env.DB, c.get('tenantId'), id);
   if (!detail) {
     return c.json(
       {
