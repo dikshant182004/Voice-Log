@@ -66,10 +66,12 @@ webrtc_handler = SmallWebRTCRequestHandler()
 
 
 class CallSession:
-    def __init__(self, call_id: str, reporter_instance: CallReporter, agent_definition: Optional[dict[str, Any]] = None):
+    def __init__(self, call_id: str, reporter_instance: CallReporter, agent_definition: Optional[dict[str, Any]] = None, tenant_id: str = '', user_id: Optional[str] = None):
         self.call_id = call_id
         self.reporter = reporter_instance
         self.agent_definition = agent_definition
+        self.tenant_id = tenant_id
+        self.user_id = user_id
         self.started_at_dt = datetime.datetime.now(datetime.timezone.utc)
         self.started_at = self.started_at_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         self.ended_at: Optional[str] = None
@@ -132,6 +134,10 @@ class CallSession:
 
         payload = {
             "call_id": self.call_id,
+            "tenant_id": self.tenant_id,
+            "agent_id": (self.agent_definition or {}).get("id"),
+            "agent_version": (self.agent_definition or {}).get("version"),
+            "user_id": self.user_id,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "duration_ms": self.duration_ms,
@@ -359,7 +365,7 @@ async def handle_webrtc_offer(payload: dict):
             agent_definition = None
 
     current_call_id.set(call_id)
-    session = CallSession(call_id, reporter, agent_definition)
+    session = CallSession(call_id, reporter, agent_definition, tenant_id=tenant_id, user_id=(str(request_data.get("user_id")).strip() if request_data.get("user_id") else None))
     active_sessions[call_id] = session
     session.start_timer()
 
