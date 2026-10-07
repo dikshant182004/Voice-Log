@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { WorkerEnv, callsRouter } from './routes/calls';
 import { statsRouter } from './routes/stats';
+import { agentsRouter } from './routes/agents';
 import { corsMiddleware } from './middleware/cors';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { errorHandler, notFoundHandler } from './middleware/errors';
@@ -23,6 +24,7 @@ app.get('/health', (c) => {
 // Mounted Routes
 app.route('/calls', callsRouter);
 app.route('/stats', statsRouter);
+app.route('/agents', agentsRouter);
 
 // Global Error and Not Found Handlers
 app.onError(errorHandler);
