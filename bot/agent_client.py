@@ -39,6 +39,8 @@ class AgentConfigClient:
             url = f"{settings.worker_base_url.rstrip('/')}/agents/{agent_id}"
             if version is not None:
                 url += f"?version={version}"
+            else:
+                url += "?published=true"
 
             try:
                 response = await self.client.get(
