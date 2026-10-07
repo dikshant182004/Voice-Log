@@ -56,7 +56,15 @@ def create_pipeline(
     )
     from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-    agent = agent_definition or {}\n    model_config = agent.get("model") or {}\n    voice_config = agent.get("voice") or {}\n    system_instruction = "\\n\\n".join(\n        part for part in (agent.get("persona", ""), agent.get("system_instructions", "")) if part\n    ) or VOICE_SYSTEM_PROMPT\n\n    stt = DeepgramSTTService(
+    agent = agent_definition or {}
+    model_config = agent.get("model") or {}
+    voice_config = agent.get("voice") or {}
+    system_instruction = "\n\n".join(
+        part
+        for part in (agent.get("persona", ""), agent.get("system_instructions", ""))
+        if part
+    ) or VOICE_SYSTEM_PROMPT
+    stt = DeepgramSTTService(
         api_key=settings.deepgram_api_key,
         sample_rate=16000,
         encoding="linear16",
