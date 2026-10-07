@@ -18,6 +18,7 @@ export async function resolvePolicyProvider(
   if (!ref) return loadPolicies(db, tenantId, definition.policies.policy_ids);
   const connection = await connectionRepo.get(db, tenantId, ref);
   if (!connection) throw new Error('Policy connection not found: ' + ref);
+  if (connection.type !== 'http_json') throw new Error('Policy connection must use type=http_json: ' + ref);
   return fetchRemotePolicies(env, connection, {
     tenantId,
     agentId: definition.id,
@@ -35,6 +36,7 @@ export async function resolveMemoryProvider(
   if (!ref) return new D1MemoryStore(db);
   const connection = await connectionRepo.get(db, tenantId, ref);
   if (!connection) throw new Error('Memory connection not found: ' + ref);
+  if (connection.type !== 'http_json') throw new Error('Memory connection must use type=http_json: ' + ref);
   return {
     async recall(input) {
       return recallRemoteMemory(env, connection, input);
@@ -55,6 +57,7 @@ export async function resolveKnowledgeProvider(
   if (!ref) return new D1KnowledgeRetriever(db);
   const connection = await connectionRepo.get(db, tenantId, ref);
   if (!connection) throw new Error('Knowledge connection not found: ' + ref);
+  if (connection.type !== 'vector_rest') throw new Error('Knowledge connection must use type=vector_rest: ' + ref);
   return {
     async search(input) {
       return searchRemoteKnowledge(env, connection, input);
