@@ -11,7 +11,7 @@ export const ConnectionSchema = z.object({
   id: z.string().min(1).max(120),
   name: z.string().min(1).max(120),
   type: ConnectionTypeSchema,
-  base_url: z.string().url(),
+  base_url: z.string().url().optional(),
   secret_ref: z.string().min(1).max(120).optional(),
   config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean().default(true),
