@@ -95,8 +95,8 @@ def create_pipeline(
         tts = CartesiaTTSService(
             api_key=settings.cartesia_api_key,
             settings=CartesiaTTSService.Settings(
-                model=settings.tts_model,
-                voice=settings.tts_voice_id,
+                model=str(voice_config.get("model") or settings.tts_model),
+                voice=str(voice_config.get("voice_id") or settings.tts_voice_id),
             ),
             sample_rate=settings.tts_sample_rate,
             max_buffer_delay_ms=0,
