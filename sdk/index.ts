@@ -20,6 +20,14 @@ export class VoiceLogClient {
     return body as T;
   }
 
+  createConnection(connection: unknown) {
+    return this.request('/v1/connections', { method: 'POST', body: JSON.stringify(connection) });
+  }
+
+  listConnections() {
+    return this.request('/v1/connections');
+  }
+
   createAgent(definition: unknown) {
     return this.request('/v1/agents', { method: 'POST', body: JSON.stringify(definition) });
   }
