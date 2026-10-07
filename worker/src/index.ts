@@ -25,6 +25,10 @@ app.use('*', corsMiddleware);
 app.use('*', requestLogMiddleware);
 
 // Health check endpoint
+app.get('/ready', (c) => {
+  return c.json({ status: 'ready', service: 'mini-call-log-worker', timestamp: new Date().toISOString() });
+});
+
 app.get('/health', (c) => {
   return c.json({ status: 'ok', service: 'mini-call-log-worker', timestamp: new Date().toISOString() });
 });
