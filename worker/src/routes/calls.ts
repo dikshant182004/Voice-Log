@@ -103,7 +103,7 @@ callsRouter.post('/', requireIngestAuth, requireTenantHeader(), async (c) => {
   const externalLog = async () => {
     if (!payload.agent_id) return;
     const agent = await agentRepo.get(c.env.DB, c.get('tenantId'), payload.agent_id, payload.agent_version, false);
-    if (!agent || !agent.definition.observability.enabled || !agent.definition.observability.connection_id || agent.definition.observability.mode === 'd1') return;
+    if (!agent || !agent.definition.observability.enabled || !agent.definition.observability.connection_id || agent.definition.observability.mode === 'd1' || !agent.definition.observability.events.includes('call_ended')) return;
     const connection = await connectionRepo.get(c.env.DB, c.get('tenantId'), agent.definition.observability.connection_id);
     if (!connection) return;
     const source: Record<string, unknown> = {
