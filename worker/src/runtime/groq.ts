@@ -33,7 +33,7 @@ export async function generateGroqResponse(
       server_url: server.url,
       authorization: server.auth_ref ? mcpAuthorizations[server.auth_ref] : undefined,
       require_approval: 'never',
-    }));
+    })) : [];
 
   const response = await fetch('https://api.groq.com/openai/v1/responses', {
     method: 'POST',
