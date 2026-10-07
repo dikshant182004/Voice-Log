@@ -72,7 +72,7 @@ runtimeRouter.post('/respond', async (c) => {
       })
     : [];
   const knowledge = definition.knowledge.enabled
-    ? await new D1KnowledgeRetriever(c.env.DB).search({
+    ? await (await resolveKnowledgeProvider(c.env.DB, c.env as unknown as Record<string, unknown>, c.get('tenantId'), definition)).search({
         tenantId: c.get('tenantId'),
         agentId: definition.id,
         query: body.message,
