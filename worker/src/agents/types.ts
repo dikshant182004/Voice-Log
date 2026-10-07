@@ -52,6 +52,7 @@ export const AgentMcpServerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   url: z.string().url(),
+  auth_ref: z.string().max(120).optional(),
   enabled: z.boolean().default(true),
 });
 
