@@ -33,6 +33,7 @@ runtimeRouter.use('*', requireIngestAuth);
 runtimeRouter.use('*', requireTenantHeader());
 
 runtimeRouter.post('/respond', async (c) => {
+  const startedAt = performance.now();
   const parsed = RequestSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
     return c.json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid runtime request', request_id: c.get('requestId'), details: parsed.error.issues } }, 400);
@@ -88,6 +89,26 @@ runtimeRouter.post('/respond', async (c) => {
     policyInstructions: resolvePolicyInstructions(policies),
   }, mcpAuthorizations);
 
+  const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
+  const usage = result.usage || {};
+  await c.env.DB.prepare(
+    'INSERT INTO agent_runs (id, tenant_id, agent_id, agent_version, user_id, session_id, channel, status, latency_ms, input_tokens, output_tokens, provider_request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(
+    crypto.randomUUID(),
+    c.get('tenantId'),
+    definition.id,
+    definition.version,
+    body.user_id || null,
+    body.session_id || null,
+    'text',
+    'completed',
+    latencyMs,
+    Number(usage.input_tokens || 0),
+    Number(usage.output_tokens || 0),
+    result.provider_request_id || null,
+    new Date().toISOString(),
+  ).run();
+
   if (definition.memory.enabled && definition.policies.allow_memory_write) {
     const sessionId = body.session_id || body.user_id;
     if (sessionId) {
@@ -113,6 +134,7 @@ runtimeRouter.post('/respond', async (c) => {
     response: result.text,
     usage: result.usage || null,
     provider_request_id: result.provider_request_id || null,
+    latency_ms: latencyMs,
     retrieval: { memories: memories.length, knowledge: knowledge.length, policies: policies.length },
   });
 });
