@@ -6,6 +6,8 @@ import { apiKeysRouter } from './routes/apiKeys';
 import { policiesRouter } from './routes/policies';
 import { memoryRouter } from './routes/memory';
 import { knowledgeRouter } from './routes/knowledge';
+import { toolsRouter } from './routes/tools';
+import { mcpRouter } from './routes/mcp';
 import { corsMiddleware } from './middleware/cors';
 import { requestLogMiddleware } from './middleware/requestLog';
 import { errorHandler, notFoundHandler } from './middleware/errors';
@@ -33,6 +35,8 @@ app.route('/api-keys', apiKeysRouter);
 app.route('/policies', policiesRouter);
 app.route('/memory', memoryRouter);
 app.route('/knowledge', knowledgeRouter);
+app.route('/tools', toolsRouter);
+app.route('/mcp', mcpRouter);
 
 // Global Error and Not Found Handlers
 app.onError(errorHandler);
