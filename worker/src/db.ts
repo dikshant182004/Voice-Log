@@ -379,7 +379,7 @@ export const callRepo: CallRepository = {
     const [v2vRows, sttRows, llmRows, ttsRows] = await Promise.all([
       db
         .prepare(`SELECT m.voice_to_voice_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.voice_to_voice_ms IS NOT NULL ORDER BY m.voice_to_voice_ms ASC LIMIT 1000`)
-        .bind(sinceDate)
+        .bind(tenantId, sinceDate)
         .all<any>(),
       db
         .prepare(`SELECT m.stt_ms FROM call_metrics m JOIN calls c ON m.call_id = c.id WHERE c.tenant_id = ? AND c.started_at >= ? AND m.stt_ms IS NOT NULL ORDER BY m.stt_ms ASC LIMIT 1000`)
