@@ -33,6 +33,10 @@ export class VoiceLogClient {
     return this.request('/v1/agents/' + encodeURIComponent(id) + '/versions/' + version + '/publish', { method: 'POST' });
   }
 
+  createVoiceSession(input: { agent_id: string; agent_version?: number; user_id?: string; call_id?: string }) {
+    return this.request('/v1/voice/session', { method: 'POST', body: JSON.stringify(input) });
+  }
+
   respond(input: {
     agent_id: string;
     agent_version?: number;
