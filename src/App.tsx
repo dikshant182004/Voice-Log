@@ -6,10 +6,11 @@ import { StatsPage } from './pages/StatsPage';
 import { LiveCallView } from './pages/LiveCallView';
 import { DevConsolePage } from './pages/DevConsolePage';
 import { AgentBuilderPage } from './pages/AgentBuilderPage';
+import { AgentPlaygroundPage } from './pages/AgentPlaygroundPage';
 import { CallDetailResponse } from './types';
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs' | 'agents'>('calls');
+  const [currentTab, setCurrentTab] = useState<'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground'>('calls');
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
 
   const handleSelectCall = (callId: string) => {
@@ -56,6 +57,8 @@ export function App() {
           <LiveCallView onCallFinished={handleCallFinished} />
         ) : currentTab === 'agents' ? (
           <AgentBuilderPage />
+        ) : currentTab === 'playground' ? (
+          <AgentPlaygroundPage />
         ) : (
           <DevConsolePage />
         )}
