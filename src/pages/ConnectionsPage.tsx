@@ -17,6 +17,7 @@ export function ConnectionsPage() {
   const [form,setForm]=useState({id:'customer-data',name:'Customer Data',type:'http_json',base_url:'',secret_ref:'',config:'{}'});
   const [message,setMessage]=useState('');
 
+  async function test(id:string){setMessage('Testing connection…');const r=await fetch(api+'/v1/connections/'+id+'/test',{method:'POST',headers:{Authorization:'Bearer '+token,'X-Tenant-ID':tenantId}});const d=await r.json();setMessage(d.ok?'Connection healthy.':'Connection test failed.')}
   async function load(){ const r=await fetch(api+'/v1/connections',{headers:{Authorization:'Bearer '+token,'X-Tenant-ID':tenantId}}); const d=await r.json(); if(r.ok)setItems(d.items||[]); }
   useEffect(()=>{void load()},[]);
 
@@ -47,7 +48,7 @@ export function ConnectionsPage() {
       <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-5">
         <h2 className="font-semibold">Configured connections</h2>
         {!items.length&&<p className="text-sm text-neutral-500">No connections yet.</p>}
-        {items.map(x=><div key={x.id} className="rounded-xl border p-4"><div className="flex justify-between"><strong>{x.name}</strong><span className="text-xs text-neutral-500">{x.type}</span></div><div className="mt-1 text-xs text-neutral-500">{x.id} · {x.base_url||'managed'}</div></div>)}
+        {items.map(x=><div key={x.id} className="rounded-xl border p-4"><div className="flex justify-between"><strong>{x.name}</strong><span className="text-xs text-neutral-500">{x.type}</span></div><div className="mt-1 text-xs text-neutral-500">{x.id} · {x.base_url||'managed'}</div><button onClick={()=>test(x.id)} className="mt-3 rounded-lg border px-3 py-1.5 text-xs">Test connection</button></div>)}
       </div>
     </div>
   </section>;
