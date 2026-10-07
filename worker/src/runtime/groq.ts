@@ -23,6 +23,7 @@ export async function generateGroqResponse(
   apiKey: string,
   agent: AgentDefinition,
   input: RuntimeInput,
+  mcpAuthorizations: Record<string, string> = {},
 ): Promise<{ text: string; usage?: any; provider_request_id?: string }> {
   const tools = agent.mcp_servers
     .filter((server) => server.enabled)
@@ -30,6 +31,7 @@ export async function generateGroqResponse(
       type: 'mcp',
       server_label: server.name,
       server_url: server.url,
+      authorization: server.auth_ref ? mcpAuthorizations[server.auth_ref] : undefined,
       require_approval: 'never',
     }));
 
