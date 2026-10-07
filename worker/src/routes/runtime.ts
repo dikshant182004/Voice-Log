@@ -55,6 +55,13 @@ runtimeRouter.post('/respond', async (c) => {
   }
 
   const policies = await loadPolicies(c.env.DB, c.get('tenantId'), definition.policies.policy_ids);
+  const effectiveDefinition = {
+    ...definition,
+    model: {
+      ...definition.model,
+      max_output_tokens: Math.min(definition.model.max_output_tokens, definition.policies.max_response_tokens),
+    },
+  };
   const memoryStore = new D1MemoryStore(c.env.DB);
   const memories = definition.memory.enabled
     ? await memoryStore.recall({
@@ -81,7 +88,7 @@ runtimeRouter.post('/respond', async (c) => {
       .filter(([, value]) => Boolean(value))
   );
 
-  const result = await generateGroqResponse(c.env.GROQ_API_KEY, definition, {
+  const result = await generateGroqResponse(c.env.GROQ_API_KEY, effectiveDefinition, {
     message: body.message,
     history: body.history,
     memories: buildMemoryContext(memories),
