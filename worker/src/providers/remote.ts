@@ -1,5 +1,5 @@
 import type { Connection } from '../connections/types';
-import type { PolicyRecord } from '../policy/types';
+import type { PolicyDefinition } from '../policy/types';
 import type { KnowledgeDocument } from '../knowledge/types';
 
 export function resolveConnectionSecret(env: Record<string, unknown>, connection: Connection): string | undefined {
@@ -46,9 +46,9 @@ export async function fetchRemotePolicies(
   env: Record<string, unknown>,
   connection: Connection,
   input: { tenantId: string; agentId: string; policyIds: string[] },
-): Promise<PolicyRecord[]> {
+): Promise<PolicyDefinition[]> {
   const payload = await requestJson(env, connection, '/policies/resolve', input);
-  return Array.isArray(payload?.items) ? payload.items as PolicyRecord[] : [];
+  return Array.isArray(payload?.items) ? payload.items as PolicyDefinition[] : [];
 }
 
 /**
