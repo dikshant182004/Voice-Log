@@ -72,13 +72,21 @@ runtimeRouter.post('/respond', async (c) => {
       })
     : [];
 
+  const env = c.env as Env & Record<string, unknown>;
+  const mcpAuthorizations = Object.fromEntries(
+    definition.mcp_servers
+      .filter((server) => server.enabled && server.auth_ref)
+      .map((server) => [server.auth_ref as string, String(env['MCP_AUTH_' + server.auth_ref!] || '')])
+      .filter(([, value]) => Boolean(value))
+  );
+
   const result = await generateGroqResponse(c.env.GROQ_API_KEY, definition, {
     message: body.message,
     history: body.history,
     memories: buildMemoryContext(memories),
     knowledge: buildKnowledgeContext(knowledge),
     policyInstructions: resolvePolicyInstructions(policies),
-  });
+  }, mcpAuthorizations);
 
   if (definition.memory.enabled && definition.policies.allow_memory_write) {
     const sessionId = body.session_id || body.user_id;
