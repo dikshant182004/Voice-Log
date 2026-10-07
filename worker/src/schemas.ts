@@ -35,6 +35,10 @@ export const UsageSchema = z.object({
 });
 
 export const PostCallPayloadSchema = z.object({
+  tenant_id: z.string().min(1).max(128),
+  agent_id: z.string().min(1).nullable().optional(),
+  agent_version: z.number().int().positive().nullable().optional(),
+  user_id: z.string().min(1).max(256).nullable().optional(),
   call_id: z.string().uuid({ message: 'call_id must be a valid UUID v4/v7' }),
   started_at: z.string().datetime({ message: 'started_at must be an ISO-8601 UTC string' }),
   ended_at: z.string().datetime({ message: 'ended_at must be an ISO-8601 UTC string' }),
