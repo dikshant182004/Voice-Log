@@ -60,9 +60,46 @@ Pipecat voice adapter
 WebRTC / STT / LLM / TTS
 ```
 
-## Storage strategy
+## Storage and customer-owned data
 
-The current Worker uses Cloudflare D1. v2 keeps D1 for transactional metadata and agent configuration. A vector-capable store should be introduced only when knowledge retrieval needs semantic vectors at production scale; the retrieval contract intentionally hides that implementation.
+D1 is the default control-plane store, not a requirement for customer data. Tenants can register named connections and reference them from an agent definition through `connection_id` values. Secrets are never embedded in agent JSON; the connection stores only a secret reference, resolved from operator-managed Worker secrets (with an external secret manager as the production extension point).
+
+The current adapters include:
+
+- **D1** for the default platform metadata, policies, memory, and lexical knowledge store.
+- **HTTP JSON policy adapter** for customer-owned policy/data services.
+- **HTTP vector/search adapter** for customer-owned semantic-search infrastructure such as Pinecone, Qdrant, Weaviate, pgvector services, or a customer RAG gateway.
+- **HTTP event sink** for customer-owned observability/call-log systems.
+
+The adapter contracts intentionally avoid vendor lock-in. A customer can put a relational database behind a small read/write service or data API rather than giving the LLM unrestricted SQL access to a production database.
+
+### Configurable observability
+
+Agents can specify:
+
+- destination connection
+- `d1`, `external`, or `both` delivery mode
+- allowed event types
+- exact fields to export
+- optional retention metadata
+
+This means transcripts, audio references, user IDs, tool arguments, token usage, latency, and other sensitive fields are **not automatically required to leave the platform**. Each tenant chooses what is exported.
+
+### Provider resolution
+
+```
+Agent
+  |
+  +-- policy_connection_id ------> customer policy API / D1
+  |
+  +-- knowledge_connection_id --> vector/search API / D1
+  |
+  +-- memory_connection_id -----> memory API / D1
+  |
+  +-- observability.connection_id -> event sink / D1
+```
+
+The runtime resolves these providers per tenant/agent at request time while preserving tenant isolation.
 
 ## Provider strategy
 
