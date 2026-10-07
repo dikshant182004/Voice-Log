@@ -2,7 +2,7 @@ import React from 'react';
 import { PhoneCall, BarChart3, ListFilter, Terminal } from 'lucide-react';
 
 interface TopNavProps {
-  currentTab: 'calls' | 'stats' | 'live' | 'logs';
+  currentTab: 'calls' | 'stats' | 'live' | 'logs' | 'agents';
   onSelectTab: (tab: 'calls' | 'stats' | 'live' | 'logs') => void;
   onStartCall: () => void;
   isCallActive?: boolean;
@@ -20,6 +20,13 @@ export const TopNav: React.FC<TopNavProps> = ({
         {/* Zone 1: Single text element wordmark */}
         <div className="flex items-center gap-6">
           <button
+          type="button"
+          onClick={() => onSelectTab('agents')}
+          className={`px-3 py-2 text-sm ${currentTab === 'agents' ? 'font-semibold text-neutral-900' : 'text-neutral-500'}`}
+        >
+          Agents
+        </button>
+        <button
             onClick={() => onSelectTab('calls')}
             className="text-lg font-bold tracking-tight text-neutral-900 hover:text-neutral-700 transition-colors text-left"
           >
