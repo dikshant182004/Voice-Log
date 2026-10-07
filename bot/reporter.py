@@ -74,6 +74,10 @@ class CallUsageModel(BaseModel):
 
 
 class IngestCallPayloadModel(BaseModel):
+  tenant_id: str
+  agent_id: Optional[str] = None
+  agent_version: Optional[int] = None
+  user_id: Optional[str] = None
   call_id: str
   started_at: str
   ended_at: str
@@ -139,6 +143,7 @@ class CallReporter:
       "Authorization": f"Bearer {self.ingest_token}",
       "Content-Type": "application/json",
       "X-Request-ID": f"rep_{call_id}",
+      "X-Tenant-ID": str(validated["tenant_id"]),
     }
 
     # Attempt send with exponential backoff & jitter
