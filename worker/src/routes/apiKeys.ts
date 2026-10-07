@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { sha256Hex } from '../middleware/auth';
-import { generateId } from '../lib/ids';
 import { requireIngestAuth, requireTenantHeader } from '../middleware/auth';
 
 interface Env { DB: import('../db').D1Database; INGEST_TOKEN?: string; }
@@ -19,7 +18,7 @@ apiKeysRouter.post('/', requireIngestAuth, requireTenantHeader(), async (c) => {
 
   const key = randomKey();
   const hash = await sha256Hex(key);
-  const id = generateId();
+  const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(
