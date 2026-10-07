@@ -27,6 +27,7 @@ export async function resolvePolicyProvider(
 
 export async function resolveMemoryProvider(
   db: import('../db').D1Database,
+  env: Record<string, unknown>,
   tenantId: string,
   definition: AgentDefinition,
 ): Promise<MemoryStore> {
