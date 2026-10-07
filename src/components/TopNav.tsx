@@ -1,8 +1,8 @@
 import React from 'react';
-import { PhoneCall, BarChart3, ListFilter, Terminal, Bot } from 'lucide-react';
+import { PhoneCall, BarChart3, ListFilter, Terminal, Bot, Plug } from 'lucide-react';
 
 interface TopNavProps {
-  currentTab: 'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground';
+  currentTab: 'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground' | 'connections' | 'connections';
   onSelectTab: (tab: 'calls' | 'stats' | 'live' | 'logs' | 'agents' | 'playground') => void;
   onStartCall: () => void;
   isCallActive?: boolean;
@@ -83,6 +83,13 @@ export const TopNav: React.FC<TopNavProps> = ({
           >
             <Terminal className="w-4 h-4" />
             <span>Playground</span>
+          </button>
+          <button
+            onClick={() => onSelectTab('connections')}
+            className={`transition-colors flex items-center gap-1.5 pb-0.5 ${currentTab === 'connections' ? 'text-neutral-900 border-b-2 border-neutral-900 font-semibold' : 'hover:text-neutral-900'}`}
+          >
+            <Plug className="w-4 h-4" />
+            <span>Connections</span>
           </button>
           <button
             onClick={() => onSelectTab('logs')}
