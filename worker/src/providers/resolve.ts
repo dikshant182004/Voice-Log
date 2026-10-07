@@ -6,14 +6,14 @@ import { D1KnowledgeRetriever } from '../knowledge/d1';
 import type { KnowledgeRetriever } from '../knowledge/types';
 import { fetchRemotePolicies, searchRemoteKnowledge } from './remote';
 import { loadPolicies } from '../policy/repository';
-import type { PolicyRecord } from '../policy/types';
+import type { PolicyDefinition } from '../policy/types';
 
 export async function resolvePolicyProvider(
   db: import('../db').D1Database,
   env: Record<string, unknown>,
   tenantId: string,
   definition: AgentDefinition,
-): Promise<PolicyRecord[]> {
+): Promise<PolicyDefinition[]> {
   const ref = definition.data?.policy_connection_id;
   if (!ref) return loadPolicies(db, tenantId, definition.policies.policy_ids);
   const connection = await connectionRepo.get(db, tenantId, ref);
